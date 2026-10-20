@@ -1,22 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createClient } from '@supabase/supabase-js';
+
+// Connessione a Supabase
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabase = (supabaseUrl && supabaseAnonKey) ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
 export default function App() {
   const [mounted, setMounted] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
-  // --- STATO AUTENTICAZIONE E SESSIONE ---
+  // --- STATO UTENTE E NAVIGAZIONE ---
   const [currentUser, setCurrentUser] = useState(null);
-  const [authTab, setAuthTab] = useState('login'); // 'login' | 'register'
+  const [authTab, setAuthTab] = useState('login');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [filterType, setFilterType] = useState('Tutte');
 
-  // Campi Form Login
+  // Form Auth
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [authSuccess, setAuthSuccess] = useState('');
 
-  // Campi Form Registrazione
   const [regName, setRegName] = useState('');
   const [regSurname, setRegSurname] = useState('');
   const [regEmail, setRegEmail] = useState('');
@@ -24,64 +29,39 @@ export default function App() {
   const [regInviteCode, setRegInviteCode] = useState('');
   const [regGroup, setRegGroup] = useState('Baby');
 
-  // Codici Invito Separati
-  const defaultCodes = {
+  // Codici Invito
+  const inviteCodes = {
     coachPulcini: 'CO-PUL26',
     coachGrandi: 'CO26',
     athletePulcini: 'PUL26',
     athleteGrandi: 'AT26'
   };
-  const [inviteCodes, setInviteCodes] = useState(defaultCodes);
 
-  // Categorie divise per Macro-Settore
   const pulciniCategories = ['Superbaby', 'Baby', 'Cuccioli'];
   const grandiCategories = ['Ragazzi', 'Allievi', 'Giovani', 'Master'];
   const allCategories = [...pulciniCategories, ...grandiCategories];
 
-  // Membri di default
-  const defaultMembers = [
-    {
-      id: '1',
-      name: 'Super Admin',
-      email: 'superadmin@skirank.it',
-      password: 'admin',
-      role: 'superadmin',
-      sector: 'all',
-      group: 'Tutti',
-      club: 'Bardonecchia Ski Academy'
-    }
-  ];
+  // Dati sincronizzati dal Cloud
   const [members, setMembers] = useState([]);
-
-  // Attività di programma
-  const defaultActivities = [
-    {
-      id: 1,
-      title: 'Allenamento Gigante - Pista 23',
-      type: 'Allenamento',
-      sector: 'grandi',
-      date: '2026-10-22',
-      time: '08:30 - 12:00',
-      targetGroup: 'Allievi',
-      confirmations: {}
-    }
-  ];
   const [activities, setActivities] = useState([]);
+  const [videos, setVideos] = useState([]);
+  const [attendanceRecords, setAttendanceRecords] = useState({});
+
+  // Nuova attività
   const [showNewActivityModal, setShowNewActivityModal] = useState(false);
   const [newActTitle, setNewActTitle] = useState('');
   const [newActType, setNewActType] = useState('Allenamento');
   const [newActGroup, setNewActGroup] = useState('Baby');
   const [newActDate, setNewActDate] = useState('');
 
-  // --- STATO REGISTRO PRESENZE ---
+  // Presenze
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   const [attendanceCategory, setAttendanceCategory] = useState('Baby');
-  const [attendanceRecords, setAttendanceRecords] = useState({});
 
-  // --- LIBRERIA VIDEO & PLAYER ---
-  const [videos, setVideos] = useState([]);
+  // Upload Video Cloudflare R2
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [tempVideoFile, setTempVideoFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [selectedRawFile, setSelectedRawFile] = useState(null);
   const [videoSpecialty, setVideoSpecialty] = useState('Slalom Gigante');
   const [videoDate, setVideoDate] = useState('');
   const [videoLocation, setVideoLocation] = useState('Bardonecchia');
@@ -90,17 +70,17 @@ export default function App() {
   const [selectedVideoPlayer, setSelectedVideoPlayer] = useState(null);
   const [videoFilterAthlete, setVideoFilterAthlete] = useState('Tutti');
 
+  // Telestrator
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawColor, setDrawColor] = useState('#00d2ff');
 
-  // Super Admin Credentials Edit
+  // Modifica Admin
   const [editAdminEmail, setEditAdminEmail] = useState('');
   const [editAdminPassword, setEditAdminPassword] = useState('');
 
-  // Rilevamento viewport mobile
   useEffect(() => {
     setMounted(true);
     const checkViewport = () => setIsMobile(window.innerWidth < 768);
@@ -109,77 +89,49 @@ export default function App() {
     return () => window.removeEventListener('resize', checkViewport);
   }, []);
 
-  // --- LETTURA PERSISTENTE LOGIN ALL'AVVIO (LOCALSTORAGE + COOKIE 365 GIORNI) ---
-  useEffect(() => {
-    try {
-      let savedUser = localStorage.getItem('academy_user');
-      
-      // Controllo cookie nel caso l'app si apra da standalone Home Screen su iPhone
-      if (!savedUser) {
-        const match = document.cookie.match(new RegExp('(^| )academy_user=([^;]+)'));
-        if (match) {
-          savedUser = decodeURIComponent(match[2]);
-        }
-      }
+  // --- CARICAMENTO DATI REAL-TIME DA SUPABASE ---
+  const fetchData = async () => {
+    if (!supabase) return;
 
-      if (savedUser) {
-        const parsed = JSON.parse(savedUser);
-        setCurrentUser(parsed);
-        // Sincronizza entrambi i sistemi di memoria
-        localStorage.setItem('academy_user', JSON.stringify(parsed));
-        document.cookie = `academy_user=${encodeURIComponent(JSON.stringify(parsed))}; path=/; max-age=31536000; SameSite=Lax`;
-      }
+    // 1. Membri
+    const { data: mems } = await supabase.from('club_members').select('*');
+    if (mems) setMembers(mems);
 
-      const savedMembers = localStorage.getItem('academy_members');
-      if (savedMembers) {
-        setMembers(JSON.parse(savedMembers));
-      } else {
-        setMembers(defaultMembers);
-        localStorage.setItem('academy_members', JSON.stringify(defaultMembers));
-      }
+    // 2. Attività
+    const { data: acts } = await supabase.from('club_activities').select('*').order('date', { ascending: true });
+    if (acts) setActivities(acts);
 
-      const savedCodes = localStorage.getItem('academy_codes');
-      if (savedCodes) {
-        setInviteCodes(JSON.parse(savedCodes));
-      } else {
-        localStorage.setItem('academy_codes', JSON.stringify(defaultCodes));
-      }
+    // 3. Video
+    const { data: vids } = await supabase.from('video_library').select('*').order('created_at', { ascending: false });
+    if (vids) setVideos(vids);
 
-      const savedActs = localStorage.getItem('academy_acts');
-      if (savedActs) setActivities(JSON.parse(savedActs));
-      else setActivities(defaultActivities);
-
-      const savedVideos = localStorage.getItem('academy_videos');
-      if (savedVideos) setVideos(JSON.parse(savedVideos));
-
-      const savedAtt = localStorage.getItem('academy_attendance');
-      if (savedAtt) setAttendanceRecords(JSON.parse(savedAtt));
-    } catch (e) {
-      console.error(e);
+    // 4. Presenze
+    const { data: atts } = await supabase.from('daily_attendance').select('*');
+    if (atts) {
+      const map = {};
+      atts.forEach(a => {
+        if (!map[a.attendance_date]) map[a.attendance_date] = {};
+        map[a.attendance_date][a.athlete_id] = a.is_present;
+      });
+      setAttendanceRecords(map);
     }
+  };
+
+  useEffect(() => {
+    // Controllo login persistente
+    try {
+      let saved = localStorage.getItem('academy_user');
+      if (!saved) {
+        const match = document.cookie.match(new RegExp('(^| )academy_user=([^;]+)'));
+        if (match) saved = decodeURIComponent(match[2]);
+      }
+      if (saved) setCurrentUser(JSON.parse(saved));
+    } catch (e) {}
+
+    fetchData();
   }, []);
 
-  const persistMembers = (list) => {
-    setMembers(list);
-    try { localStorage.setItem('academy_members', JSON.stringify(list)); } catch (e) {}
-  };
-
-  const persistActivities = (acts) => {
-    setActivities(acts);
-    try { localStorage.setItem('academy_acts', JSON.stringify(acts)); } catch (e) {}
-  };
-
-  const persistVideos = (vids) => {
-    setVideos(vids);
-    try { localStorage.setItem('academy_videos', JSON.stringify(vids)); } catch (e) {}
-  };
-
-  const persistAttendance = (att) => {
-    setAttendanceRecords(att);
-    try { localStorage.setItem('academy_attendance', JSON.stringify(att)); } catch (e) {}
-  };
-
-  // --- LOGIN CON SCRITTURA COOKIE PERMANENTE ---
+  // --- LOGIN ---
   const handleLogin = (e) => {
     e.preventDefault();
     setAuthError('');
@@ -189,87 +141,76 @@ export default function App() {
     const user = members.find(m => m.email.toLowerCase() === cleanEmail);
 
     if (!user) {
-      setAuthError('Nessun account registrato con questa email.');
+      setAuthError('Nessun account trovato con questa email.');
       return;
     }
 
     if (user.password !== loginPassword) {
-      setAuthError('Password errata. Riprova.');
+      setAuthError('Password errata.');
       return;
     }
 
     setCurrentUser(user);
     try {
-      const userStr = JSON.stringify(user);
-      localStorage.setItem('academy_user', userStr);
-      document.cookie = `academy_user=${encodeURIComponent(userStr)}; path=/; max-age=31536000; SameSite=Lax`;
+      const uStr = JSON.stringify(user);
+      localStorage.setItem('academy_user', uStr);
+      document.cookie = `academy_user=${encodeURIComponent(uStr)}; path=/; max-age=31536000; SameSite=Lax`;
     } catch (e) {}
     setLoginPassword('');
   };
 
-  // --- REGISTRAZIONE CON SCRITTURA COOKIE PERMANENTE ---
-  const handleRegister = (e) => {
+  // --- REGISTRAZIONE SU DATABASE SUPABASE ---
+  const handleRegister = async (e) => {
     e.preventDefault();
     setAuthError('');
     setAuthSuccess('');
 
     if (!regName.trim() || !regSurname.trim() || !regEmail.trim() || !regPassword.trim() || !regInviteCode.trim()) {
-      setAuthError('Compila tutti i campi richiesti.');
+      setAuthError('Compila tutti i campi.');
       return;
     }
 
     const cleanEmail = regEmail.toLowerCase().trim();
-    if (members.some(m => m.email.toLowerCase() === cleanEmail)) {
-      setAuthError('Questa email è già registrata.');
-      return;
-    }
-
     const cleanCode = regInviteCode.trim().toUpperCase();
+
     let assignedRole = '';
     let assignedSector = '';
 
-    if (cleanCode === inviteCodes.coachPulcini.toUpperCase()) {
-      assignedRole = 'coach';
-      assignedSector = 'pulcini';
-    } else if (cleanCode === inviteCodes.coachGrandi.toUpperCase()) {
-      assignedRole = 'coach';
-      assignedSector = 'grandi';
-    } else if (cleanCode === inviteCodes.athletePulcini.toUpperCase()) {
-      assignedRole = 'athlete';
-      assignedSector = 'pulcini';
-    } else if (cleanCode === inviteCodes.athleteGrandi.toUpperCase()) {
-      assignedRole = 'athlete';
-      assignedSector = 'grandi';
-    } else {
-      setAuthError('Codice di invito non valido! Controlla con il tuo club.');
+    if (cleanCode === inviteCodes.coachPulcini) { assignedRole = 'coach'; assignedSector = 'pulcini'; }
+    else if (cleanCode === inviteCodes.coachGrandi) { assignedRole = 'coach'; assignedSector = 'grandi'; }
+    else if (cleanCode === inviteCodes.athletePulcini) { assignedRole = 'athlete'; assignedSector = 'pulcini'; }
+    else if (cleanCode === inviteCodes.athleteGrandi) { assignedRole = 'athlete'; assignedSector = 'grandi'; }
+    else {
+      setAuthError('Codice di invito non valido.');
       return;
     }
 
     let finalGroup = regGroup;
     if (assignedRole === 'athlete') {
-      if (assignedSector === 'pulcini' && !pulciniCategories.includes(regGroup)) {
-        finalGroup = 'Baby';
-      }
-      if (assignedSector === 'grandi' && !grandiCategories.includes(regGroup)) {
-        finalGroup = 'Ragazzi';
-      }
+      if (assignedSector === 'pulcini' && !pulciniCategories.includes(regGroup)) finalGroup = 'Baby';
+      if (assignedSector === 'grandi' && !grandiCategories.includes(regGroup)) finalGroup = 'Ragazzi';
     } else {
       finalGroup = 'Tutti';
     }
 
     const newUser = {
-      id: Date.now().toString(),
       name: `${regName.trim()} ${regSurname.trim()}`,
       email: cleanEmail,
       password: regPassword,
       role: assignedRole,
       sector: assignedSector,
-      group: finalGroup,
+      category: finalGroup,
       club: 'Bardonecchia Ski Academy'
     };
 
-    const updated = [...members, newUser];
-    persistMembers(updated);
+    if (supabase) {
+      const { data, error } = await supabase.from('club_members').insert([newUser]).select();
+      if (error) {
+        setAuthError('Errore durante la registrazione: email già utilizzata.');
+        return;
+      }
+      setMembers([...members, data[0]]);
+    }
 
     setRegName('');
     setRegSurname('');
@@ -277,11 +218,10 @@ export default function App() {
     setRegPassword('');
     setRegInviteCode('');
     setLoginEmail(cleanEmail);
-    setAuthSuccess('Registrazione completata! Inserisci la password per accedere.');
+    setAuthSuccess('Registrazione completata con successo! Ora accedi.');
     setAuthTab('login');
   };
 
-  // --- LOGOUT CON CANCELLAZIONE COOKIE ---
   const logout = () => {
     setCurrentUser(null);
     try {
@@ -302,29 +242,49 @@ export default function App() {
     return false;
   };
 
-  const toggleAttendance = (athleteId) => {
+  // --- PRESENZE REAL-TIME ---
+  const toggleAttendance = async (athleteId) => {
     const dayRecords = attendanceRecords[attendanceDate] || {};
     const newStatus = !dayRecords[athleteId];
-    const updated = {
+
+    if (supabase) {
+      await supabase.from('daily_attendance').upsert({
+        attendance_date: attendanceDate,
+        category: attendanceCategory,
+        athlete_id: athleteId,
+        is_present: newStatus
+      }, { onConflict: 'attendance_date,athlete_id' });
+    }
+
+    setAttendanceRecords({
       ...attendanceRecords,
       [attendanceDate]: {
         ...dayRecords,
         [athleteId]: newStatus
       }
-    };
-    persistAttendance(updated);
+    });
   };
 
-  const markAllPresent = (athletes) => {
+  const markAllPresent = async (athletes) => {
     const dayRecords = { ...(attendanceRecords[attendanceDate] || {}) };
-    athletes.forEach(a => {
+    const rows = athletes.map(a => {
       dayRecords[a.id] = true;
+      return {
+        attendance_date: attendanceDate,
+        category: attendanceCategory,
+        athlete_id: a.id,
+        is_present: true
+      };
     });
-    const updated = {
+
+    if (supabase) {
+      await supabase.from('daily_attendance').upsert(rows, { onConflict: 'attendance_date,athlete_id' });
+    }
+
+    setAttendanceRecords({
       ...attendanceRecords,
       [attendanceDate]: dayRecords
-    };
-    persistAttendance(updated);
+    });
   };
 
   const getAthleteStats = (athleteId) => {
@@ -339,69 +299,79 @@ export default function App() {
     });
     const total = attended + absent;
     const rate = total > 0 ? Math.round((attended / total) * 100) : 100;
-    return { attended, absent, total, rate };
+    return { attended, absent, rate };
   };
 
-  const handleConfirmActivity = (activityId, response) => {
-    const updated = activities.map(act => {
-      if (act.id === activityId) {
-        return {
-          ...act,
-          confirmations: {
-            ...(act.confirmations || {}),
-            [currentUser.id]: response
-          }
-        };
+  // --- CONFERMA ATTIVITÀ ---
+  const handleConfirmActivity = async (activityId, response) => {
+    const act = activities.find(a => a.id === activityId);
+    if (!act) return;
+
+    const newConf = { ...(act.confirmations || {}), [currentUser.id]: response };
+
+    if (supabase) {
+      await supabase.from('club_activities').update({ confirmations: newConf }).eq('id', activityId);
+    }
+
+    setActivities(activities.map(a => a.id === activityId ? { ...a, confirmations: newConf } : a));
+  };
+
+  // --- UPLOAD VIDEO DIRETTO SU CLOUDFLARE R2 ---
+  const handleUploadToCloudflare = async (e) => {
+    e.preventDefault();
+    if (!selectedRawFile) return;
+
+    setUploading(true);
+    try {
+      // 1. Invio in streaming all'API su Vercel verso Cloudflare R2
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'video/mp4' },
+        body: selectedRawFile
+      });
+
+      const { url } = await res.json();
+      if (!url) throw new Error('Upload fallito');
+
+      const taggedAthlete = members.find(m => m.id === videoTaggedAthleteId);
+
+      const newVideo = {
+        video_url: url,
+        specialty: videoSpecialty,
+        date: videoDate,
+        location: videoLocation || 'Bardonecchia',
+        slope: videoSlope || 'Pista Standard',
+        athlete_id: videoTaggedAthleteId,
+        athlete_name: taggedAthlete ? taggedAthlete.name : 'Non Taggato',
+        athlete_group: taggedAthlete ? taggedAthlete.category : 'Generale',
+        uploaded_by: currentUser.name
+      };
+
+      // 2. Registrazione metadati su Supabase
+      if (supabase) {
+        const { data } = await supabase.from('video_library').insert([newVideo]).select();
+        if (data) setVideos([data[0], ...videos]);
       }
-      return act;
-    });
-    persistActivities(updated);
-  };
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setTempVideoFile(URL.createObjectURL(file));
-      setVideoDate(new Date().toISOString().split('T')[0]);
-      setShowUploadModal(true);
+      setShowUploadModal(false);
+      setSelectedRawFile(null);
+      alert('Video inviato e salvato su Cloudflare R2 con successo!');
+    } catch (err) {
+      alert('Errore durante l\'invio del video a Cloudflare.');
+    } finally {
+      setUploading(false);
     }
   };
 
-  const handleSaveVideo = (e) => {
-    e.preventDefault();
-    if (!tempVideoFile) return;
-
-    const taggedAthlete = members.find(m => m.id === videoTaggedAthleteId);
-
-    const newVideo = {
-      id: Date.now(),
-      url: tempVideoFile,
-      specialty: videoSpecialty,
-      date: videoDate,
-      location: videoLocation || 'Bardonecchia',
-      slope: videoSlope || 'Pista Standard',
-      athleteId: videoTaggedAthleteId,
-      athleteName: taggedAthlete ? taggedAthlete.name : 'Non Taggato',
-      athleteGroup: taggedAthlete ? taggedAthlete.group : 'Generale',
-      uploadedBy: currentUser.name
-    };
-
-    const updated = [newVideo, ...videos];
-    persistVideos(updated);
-    setShowUploadModal(false);
-    setTempVideoFile(null);
-    setVideoSlope('');
-    alert('Video caricato con successo!');
-  };
-
-  const deleteVideo = (id) => {
+  const deleteVideo = async (id) => {
     if (confirm('Vuoi cancellare questo video?')) {
-      const updated = videos.filter(v => v.id !== id);
-      persistVideos(updated);
+      if (supabase) await supabase.from('video_library').delete().eq('id', id);
+      setVideos(videos.filter(v => v.id !== id));
       if (selectedVideoPlayer?.id === id) setSelectedVideoPlayer(null);
     }
   };
 
+  // Telestrator Drawing
   const getCoords = (e) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
@@ -434,69 +404,69 @@ export default function App() {
     ctx.stroke();
   };
 
-  const handleMoveCategory = (athleteId, newCat) => {
-    const updated = members.map(m => (m.id === athleteId ? { ...m, group: newCat } : m));
-    persistMembers(updated);
+  const handleMoveCategory = async (athleteId, newCat) => {
+    if (supabase) {
+      await supabase.from('club_members').update({ category: newCat }).eq('id', athleteId);
+    }
+    setMembers(members.map(m => m.id === athleteId ? { ...m, category: newCat } : m));
   };
 
-  const deleteMember = (id) => {
-    if (confirm('Sei sicuro di voler eliminare questo utente?')) {
-      const updated = members.filter(m => m.id !== id);
-      persistMembers(updated);
+  const deleteMember = async (id) => {
+    if (confirm('Eliminare definitivamente questo utente?')) {
+      if (supabase) await supabase.from('club_members').delete().eq('id', id);
+      setMembers(members.filter(m => m.id !== id));
     }
   };
 
-  const deleteActivity = (id) => {
-    if (confirm('Vuoi eliminare questa attività?')) {
-      const updated = activities.filter(a => a.id !== id);
-      persistActivities(updated);
+  const deleteActivity = async (id) => {
+    if (confirm('Eliminare questa attività?')) {
+      if (supabase) await supabase.from('club_activities').delete().eq('id', id);
+      setActivities(activities.filter(a => a.id !== id));
     }
   };
 
-  const handleCreateActivity = (e) => {
+  const handleCreateActivity = async (e) => {
     e.preventDefault();
     if (!newActTitle) return;
 
     const isPulc = pulciniCategories.includes(newActGroup);
-    const actSector = isPulc ? 'pulcini' : 'grandi';
-
     const newAct = {
-      id: Date.now(),
       title: newActTitle,
       type: newActType,
-      sector: actSector,
+      sector: isPulc ? 'pulcini' : 'grandi',
       date: newActDate || new Date().toISOString().split('T')[0],
       time: '09:00 - 12:30',
-      targetGroup: newActGroup,
+      target_group: newActGroup,
       confirmations: {}
     };
-    const updated = [newAct, ...activities];
-    persistActivities(updated);
+
+    if (supabase) {
+      const { data } = await supabase.from('club_activities').insert([newAct]).select();
+      if (data) setActivities([...activities, data[0]]);
+    }
+
     setShowNewActivityModal(false);
     setNewActTitle('');
   };
 
-  const handleUpdateAdminCredentials = (e) => {
+  const handleUpdateAdminCredentials = async (e) => {
     e.preventDefault();
-    const updated = members.map(m => {
-      if (m.role === 'superadmin') {
-        return {
-          ...m,
-          email: editAdminEmail || m.email,
-          password: editAdminPassword || m.password
-        };
-      }
-      return m;
-    });
-    persistMembers(updated);
-    const me = updated.find(m => m.role === 'superadmin');
-    setCurrentUser(me);
+    if (supabase) {
+      await supabase.from('club_members').update({
+        email: editAdminEmail || currentUser.email,
+        password: editAdminPassword || currentUser.password
+      }).eq('role', 'superadmin');
+    }
+    const updated = {
+      ...currentUser,
+      email: editAdminEmail || currentUser.email,
+      password: editAdminPassword || currentUser.password
+    };
+    setCurrentUser(updated);
     try {
-      const userStr = JSON.stringify(me);
-      localStorage.setItem('academy_user', userStr);
-      document.cookie = `academy_user=${encodeURIComponent(userStr)}; path=/; max-age=31536000; SameSite=Lax`;
+      localStorage.setItem('academy_user', JSON.stringify(updated));
     } catch (e) {}
-    alert('Credenziali Super Admin aggiornate!');
+    alert('Credenziali salvate!');
   };
 
   if (!mounted) return null;
@@ -530,92 +500,39 @@ export default function App() {
           </div>
         </div>
 
-        <div style={{
-          flex: 1,
-          backgroundColor: '#090e1a',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: isMobile ? '20px 16px 40px' : '40px'
-        }}>
+        <div style={{ flex: 1, backgroundColor: '#090e1a', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isMobile ? '20px 16px 40px' : '40px' }}>
           <div style={{ width: '100%', maxWidth: '380px' }}>
             <div style={{ display: 'flex', borderBottom: '2px solid #1a2742', marginBottom: '20px' }}>
               <button
                 type="button"
                 onClick={() => { setAuthTab('login'); setAuthError(''); setAuthSuccess(''); }}
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  background: 'none',
-                  border: 'none',
-                  borderBottom: authTab === 'login' ? '3px solid #00d2ff' : '3px solid transparent',
-                  color: authTab === 'login' ? '#00d2ff' : '#6d83a7',
-                  fontSize: '15px',
-                  fontWeight: 'bold',
-                  cursor: 'pointer'
-                }}
+                style={{ flex: 1, padding: '12px', background: 'none', border: 'none', borderBottom: authTab === 'login' ? '3px solid #00d2ff' : '3px solid transparent', color: authTab === 'login' ? '#00d2ff' : '#6d83a7', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer' }}
               >
                 Accedi
               </button>
               <button
                 type="button"
                 onClick={() => { setAuthTab('register'); setAuthError(''); setAuthSuccess(''); }}
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  background: 'none',
-                  border: 'none',
-                  borderBottom: authTab === 'register' ? '3px solid #00d2ff' : '3px solid transparent',
-                  color: authTab === 'register' ? '#00d2ff' : '#6d83a7',
-                  fontSize: '15px',
-                  fontWeight: 'bold',
-                  cursor: 'pointer'
-                }}
+                style={{ flex: 1, padding: '12px', background: 'none', border: 'none', borderBottom: authTab === 'register' ? '3px solid #00d2ff' : '3px solid transparent', color: authTab === 'register' ? '#00d2ff' : '#6d83a7', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer' }}
               >
                 Registrati
               </button>
             </div>
 
-            {authError && (
-              <div style={{ backgroundColor: '#2d1518', border: '1px solid #742a2a', color: '#ff6b6b', padding: '10px', borderRadius: '6px', fontSize: '13px', marginBottom: '16px' }}>
-                {authError}
-              </div>
-            )}
-
-            {authSuccess && (
-              <div style={{ backgroundColor: '#132e27', border: '1px solid #1e5c4a', color: '#06d6a0', padding: '10px', borderRadius: '6px', fontSize: '13px', marginBottom: '16px' }}>
-                {authSuccess}
-              </div>
-            )}
+            {authError && <div style={{ backgroundColor: '#2d1518', border: '1px solid #742a2a', color: '#ff6b6b', padding: '10px', borderRadius: '6px', fontSize: '13px', marginBottom: '16px' }}>{authError}</div>}
+            {authSuccess && <div style={{ backgroundColor: '#132e27', border: '1px solid #1e5c4a', color: '#06d6a0', padding: '10px', borderRadius: '6px', fontSize: '13px', marginBottom: '16px' }}>{authSuccess}</div>}
 
             {authTab === 'login' && (
               <form onSubmit={handleLogin}>
                 <div style={{ marginBottom: '14px' }}>
                   <label style={fieldLabelStyle}>Email</label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="tua@email.it"
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    style={inputStyle}
-                  />
+                  <input type="email" required placeholder="tua@email.it" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} style={inputStyle} />
                 </div>
                 <div style={{ marginBottom: '22px' }}>
                   <label style={fieldLabelStyle}>Password</label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="••••••••••••"
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    style={inputStyle}
-                  />
+                  <input type="password" required placeholder="••••••••••••" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} style={inputStyle} />
                 </div>
-
-                <button type="submit" style={primarySubmitBtn}>
-                  Accedi al Club
-                </button>
+                <button type="submit" style={primarySubmitBtn}>Accedi al Club</button>
               </form>
             )}
 
@@ -643,31 +560,20 @@ export default function App() {
                 </div>
 
                 <div style={{ marginBottom: '12px' }}>
-                  <label style={{ ...fieldLabelStyle, color: '#00d2ff', fontWeight: 'bold' }}>
-                    Codice di invito
-                  </label>
-                  <input
-                    required
-                    placeholder="Inserisci codice invito..."
-                    value={regInviteCode}
-                    onChange={(e) => setRegInviteCode(e.target.value)}
-                    style={{ ...inputStyle, border: '1px solid #00d2ff', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold' }}
-                  />
+                  <label style={{ ...fieldLabelStyle, color: '#00d2ff', fontWeight: 'bold' }}>Codice di invito</label>
+                  <input required placeholder="Inserisci codice..." value={regInviteCode} onChange={(e) => setRegInviteCode(e.target.value)} style={{ ...inputStyle, border: '1px solid #00d2ff', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold' }} />
                 </div>
 
                 <div style={{ marginBottom: '20px' }}>
-                  <label style={fieldLabelStyle}>Categoria di appartenenza (Atleti)</label>
+                  <label style={fieldLabelStyle}>Categoria (Atleti)</label>
                   <select value={regGroup} onChange={(e) => setRegGroup(e.target.value)} style={selectDarkStyle}>
                     {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
 
-                <button type="submit" style={primarySubmitBtn}>
-                  Completa Registrazione
-                </button>
+                <button type="submit" style={primarySubmitBtn}>Completa Registrazione</button>
               </form>
             )}
-
           </div>
         </div>
       </div>
@@ -675,19 +581,19 @@ export default function App() {
   }
 
   const filteredVideos = videos.filter(v => {
-    if (isAthlete) return v.athleteId === currentUser.id;
+    if (isAthlete) return v.athlete_id === currentUser.id;
     if (videoFilterAthlete === 'Tutti') return true;
-    return v.athleteId === videoFilterAthlete;
+    return v.athlete_id === videoFilterAthlete;
   });
 
   const visibleActivities = activities.filter(a => {
     if (isSuperAdmin) return true;
-    if (isAthlete) return a.targetGroup === currentUser.group || a.targetGroup === 'Tutti';
+    if (isAthlete) return a.target_group === currentUser.category || a.target_group === 'Tutti';
     return true;
   });
 
   const currentAttendanceAthletes = members
-    .filter(m => m.role === 'athlete' && m.group === attendanceCategory)
+    .filter(m => m.role === 'athlete' && m.category === attendanceCategory)
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return (
@@ -695,17 +601,7 @@ export default function App() {
       
       {/* HEADER MOBILE */}
       {isMobile ? (
-        <header style={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 900,
-          backgroundColor: '#0b1120',
-          borderBottom: '1px solid #162238',
-          padding: '12px 16px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center'
-        }}>
+        <header style={{ position: 'sticky', top: 0, zIndex: 900, backgroundColor: '#0b1120', borderBottom: '1px solid #162238', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <div style={{ ...logoIconStyle, width: '28px', height: '28px', fontSize: '15px' }}>M</div>
             <div>
@@ -715,11 +611,9 @@ export default function App() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '11px', color: '#00d2ff', backgroundColor: '#13233d', padding: '3px 8px', borderRadius: '12px', fontWeight: 'bold' }}>
-              {isSuperAdmin ? 'Admin' : isCoach ? `Coach ${currentUser.sector}` : currentUser.group}
+              {isSuperAdmin ? 'Admin' : isCoach ? `Coach ${currentUser.sector}` : currentUser.category}
             </span>
-            <button onClick={logout} style={{ background: 'none', border: 'none', color: '#ff4d4f', fontSize: '13px', padding: '4px', cursor: 'pointer' }}>
-              🚪
-            </button>
+            <button onClick={logout} style={{ background: 'none', border: 'none', color: '#ff4d4f', fontSize: '13px', padding: '4px', cursor: 'pointer' }}>🚪</button>
           </div>
         </header>
       ) : (
@@ -735,31 +629,13 @@ export default function App() {
             </div>
 
             <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <button onClick={() => setActiveTab('dashboard')} style={navBtnStyle(activeTab === 'dashboard')}>
-                📊 Dashboard
-              </button>
-              <button onClick={() => setActiveTab('programmazione')} style={navBtnStyle(activeTab === 'programmazione')}>
-                📅 Programmazione
-              </button>
-              <button onClick={() => setActiveTab('presenze')} style={navBtnStyle(activeTab === 'presenze')}>
-                📋 Presenze & Statistiche
-              </button>
-              <button onClick={() => setActiveTab('video')} style={navBtnStyle(activeTab === 'video')}>
-                🎞️ Libreria Video
-              </button>
-              <button onClick={() => setActiveTab('atleti')} style={navBtnStyle(activeTab === 'atleti')}>
-                👥 Atleti
-              </button>
-              {!isAthlete && (
-                <button onClick={() => setActiveTab('club')} style={navBtnStyle(activeTab === 'club')}>
-                  ⚙️ Gestione Club
-                </button>
-              )}
-              {isSuperAdmin && (
-                <button onClick={() => setActiveTab('admin')} style={navBtnStyle(activeTab === 'admin')}>
-                  🛡️ Super Admin
-                </button>
-              )}
+              <button onClick={() => setActiveTab('dashboard')} style={navBtnStyle(activeTab === 'dashboard')}>📊 Dashboard</button>
+              <button onClick={() => setActiveTab('programmazione')} style={navBtnStyle(activeTab === 'programmazione')}>📅 Programmazione</button>
+              <button onClick={() => setActiveTab('presenze')} style={navBtnStyle(activeTab === 'presenze')}>📋 Presenze & Statistiche</button>
+              <button onClick={() => setActiveTab('video')} style={navBtnStyle(activeTab === 'video')}>🎞️ Libreria Video</button>
+              <button onClick={() => setActiveTab('atleti')} style={navBtnStyle(activeTab === 'atleti')}>👥 Atleti</button>
+              {!isAthlete && <button onClick={() => setActiveTab('club')} style={navBtnStyle(activeTab === 'club')}>⚙️ Gestione Club</button>}
+              {isSuperAdmin && <button onClick={() => setActiveTab('admin')} style={navBtnStyle(activeTab === 'admin')}>🛡️ Super Admin</button>}
             </nav>
           </div>
 
@@ -769,33 +645,23 @@ export default function App() {
               <div style={{ overflow: 'hidden' }}>
                 <div style={{ fontSize: '13px', fontWeight: 'bold' }}>{currentUser.name}</div>
                 <div style={{ fontSize: '11px', color: '#6882a9', textTransform: 'capitalize' }}>
-                  {isSuperAdmin ? 'Super Admin' : isCoach ? `Coach (${currentUser.sector})` : `Atleta (${currentUser.group})`}
+                  {isSuperAdmin ? 'Super Admin' : isCoach ? `Coach (${currentUser.sector})` : `Atleta (${currentUser.category})`}
                 </div>
               </div>
             </div>
-            <button onClick={logout} style={{ background: 'none', border: 'none', color: '#e63946', fontSize: '12px', cursor: 'pointer', padding: 0 }}>
-              🚪 Esci
-            </button>
+            <button onClick={logout} style={{ background: 'none', border: 'none', color: '#e63946', fontSize: '12px', cursor: 'pointer', padding: 0 }}>🚪 Esci</button>
           </div>
         </aside>
       )}
 
       {/* CONTENUTO CENTRALE */}
-      <main style={{
-        flex: 1,
-        padding: isMobile ? '16px 14px 90px' : '24px 32px',
-        overflowY: 'auto'
-      }}>
+      <main style={{ flex: 1, padding: isMobile ? '16px 14px 90px' : '24px 32px', overflowY: 'auto' }}>
         
-        {/* 1. DASHBOARD */}
+        {/* DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div>
-            <div style={{ fontSize: '11px', color: '#5f759c', letterSpacing: '1px', textTransform: 'uppercase' }}>
-              {currentUser.role.toUpperCase()} • 2026/2027
-            </div>
-            <h1 style={{ fontSize: isMobile ? '22px' : '28px', margin: '4px 0 16px 0' }}>
-              Ciao {currentUser.name.split(' ')[0]} 👋
-            </h1>
+            <div style={{ fontSize: '11px', color: '#5f759c', letterSpacing: '1px', textTransform: 'uppercase' }}>{currentUser.role.toUpperCase()} • 2026/2027</div>
+            <h1 style={{ fontSize: isMobile ? '22px' : '28px', margin: '4px 0 16px 0' }}>Ciao {currentUser.name.split(' ')[0]} 👋</h1>
 
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: '10px', marginBottom: '24px' }}>
               <div style={statCardStyle}>
@@ -806,7 +672,7 @@ export default function App() {
               <div style={statCardStyle}>
                 <div style={statIconBox('#3a86ff')}>🎞️</div>
                 <div style={{ fontSize: '22px', fontWeight: 'bold', marginTop: '6px' }}>{filteredVideos.length}</div>
-                <div style={{ fontSize: '10px', color: '#6d83a7' }}>VIDEO</div>
+                <div style={{ fontSize: '10px', color: '#6d83a7' }}>VIDEO R2</div>
               </div>
               <div style={statCardStyle}>
                 <div style={statIconBox('#8338ec')}>👥</div>
@@ -815,40 +681,34 @@ export default function App() {
               </div>
               <div style={statCardStyle}>
                 <div style={statIconBox('#06d6a0')}>✅</div>
-                <div style={{ fontSize: '22px', fontWeight: 'bold', marginTop: '6px' }}>
-                  {Object.keys(attendanceRecords).length}
-                </div>
+                <div style={{ fontSize: '22px', fontWeight: 'bold', marginTop: '6px' }}>{Object.keys(attendanceRecords).length}</div>
                 <div style={{ fontSize: '10px', color: '#6d83a7' }}>SESSIONI REG.</div>
               </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div style={sectionBoxStyle}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
-                  <h3 style={{ margin: 0, fontSize: '15px' }}>Prossime attività</h3>
-                  <span onClick={() => setActiveTab('programmazione')} style={{ color: '#00d2ff', fontSize: '12px', cursor: 'pointer' }}>Vedi tutte &gt;</span>
-                </div>
-                {visibleActivities.length === 0 ? (
-                  <p style={{ color: '#5f759c', textAlign: 'center', padding: '20px 0', fontSize: '13px' }}>Nessuna attività in programma.</p>
-                ) : (
-                  visibleActivities.slice(0, 3).map(a => (
-                    <div key={a.id} style={{ padding: '10px', backgroundColor: '#0f1a30', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontWeight: 'bold', fontSize: '13px' }}>{a.title}</div>
-                        <div style={{ fontSize: '11px', color: '#7c94ba', marginTop: '2px' }}>{a.date} • {a.targetGroup}</div>
-                      </div>
-                      {isSuperAdmin && (
-                        <button onClick={() => deleteActivity(a.id)} style={deleteBtnStyle}>🗑️</button>
-                      )}
-                    </div>
-                  ))
-                )}
+            <div style={sectionBoxStyle}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <h3 style={{ margin: 0, fontSize: '15px' }}>Prossime attività</h3>
+                <span onClick={() => setActiveTab('programmazione')} style={{ color: '#00d2ff', fontSize: '12px', cursor: 'pointer' }}>Vedi tutte &gt;</span>
               </div>
+              {visibleActivities.length === 0 ? (
+                <p style={{ color: '#5f759c', textAlign: 'center', padding: '20px 0', fontSize: '13px' }}>Nessuna attività in programma.</p>
+              ) : (
+                visibleActivities.slice(0, 3).map(a => (
+                  <div key={a.id} style={{ padding: '10px', backgroundColor: '#0f1a30', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontWeight: 'bold', fontSize: '13px' }}>{a.title}</div>
+                      <div style={{ fontSize: '11px', color: '#7c94ba', marginTop: '2px' }}>{a.date} • {a.target_group}</div>
+                    </div>
+                    {isSuperAdmin && <button onClick={() => deleteActivity(a.id)} style={deleteBtnStyle}>🗑️</button>}
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}
 
-        {/* 2. PROGRAMMAZIONE */}
+        {/* PROGRAMMAZIONE */}
         {activeTab === 'programmazione' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
@@ -857,295 +717,158 @@ export default function App() {
                 <p style={{ margin: '2px 0 0', color: '#748cae', fontSize: '12px' }}>Conferma la tua presenza agli allenamenti e alle gare.</p>
               </div>
               {(isSuperAdmin || isCoach) && (
-                <button onClick={() => setShowNewActivityModal(true)} style={{ ...actionBtnCyan, padding: isMobile ? '8px 12px' : '8px 16px', fontSize: '12px' }}>
-                  + Nuova
-                </button>
+                <button onClick={() => setShowNewActivityModal(true)} style={{ ...actionBtnCyan, padding: isMobile ? '8px 12px' : '8px 16px', fontSize: '12px' }}>+ Nuova</button>
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: '6px', marginBottom: '16px', overflowX: 'auto', paddingBottom: '4px' }}>
-              {['Tutte', 'Allenamento', 'Gara', 'Trasferta', 'Stage'].map(t => (
-                <button
-                  key={t}
-                  onClick={() => setFilterType(t)}
-                  style={{
-                    padding: '6px 12px',
-                    borderRadius: '16px',
-                    border: '1px solid',
-                    borderColor: filterType === t ? '#00d2ff' : '#1e2c47',
-                    backgroundColor: filterType === t ? '#00d2ff' : 'transparent',
-                    color: filterType === t ? '#000' : '#889ebf',
-                    fontSize: '11px',
-                    fontWeight: 'bold',
-                    whiteSpace: 'nowrap',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {visibleActivities
-                .filter(a => filterType === 'Tutte' || a.type === filterType)
-                .map(a => {
-                  const myStatus = a.confirmations ? a.confirmations[currentUser.id] : null;
-                  const yesCount = Object.values(a.confirmations || {}).filter(v => v === 'yes').length;
-                  const noCount = Object.values(a.confirmations || {}).filter(v => v === 'no').length;
+              {visibleActivities.map(a => {
+                const myStatus = a.confirmations ? a.confirmations[currentUser.id] : null;
+                const yesCount = Object.values(a.confirmations || {}).filter(v => v === 'yes').length;
+                const noCount = Object.values(a.confirmations || {}).filter(v => v === 'no').length;
 
-                  return (
-                    <div key={a.id} style={{ backgroundColor: '#0f172a', padding: '14px', borderRadius: '8px', border: '1px solid #192642' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#132b45', color: '#00d2ff', fontWeight: 'bold' }}>{a.type}</span>
-                            <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{a.title}</span>
-                          </div>
-                          <div style={{ fontSize: '11px', color: '#728aa9', marginTop: '4px' }}>
-                            📅 {a.date} • 🕒 {a.time} • Gruppo: <strong>{a.targetGroup}</strong>
-                          </div>
+                return (
+                  <div key={a.id} style={{ backgroundColor: '#0f172a', padding: '14px', borderRadius: '8px', border: '1px solid #192642' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#132b45', color: '#00d2ff', fontWeight: 'bold' }}>{a.type}</span>
+                          <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{a.title}</span>
                         </div>
-                        {isSuperAdmin && (
-                          <button onClick={() => deleteActivity(a.id)} style={deleteBtnStyle}>🗑️</button>
-                        )}
+                        <div style={{ fontSize: '11px', color: '#728aa9', marginTop: '4px' }}>📅 {a.date} • 🕒 {a.time} • Gruppo: <strong>{a.target_group}</strong></div>
                       </div>
-
-                      {/* AREA CONFERMA PER GLI ATLETI */}
-                      {isAthlete && (
-                        <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid #162238', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <span style={{ fontSize: '12px', color: '#889dbf' }}>La tua presenza:</span>
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <button
-                              onClick={() => handleConfirmActivity(a.id, 'yes')}
-                              style={{
-                                padding: '6px 12px',
-                                borderRadius: '6px',
-                                border: '1px solid #06d6a0',
-                                backgroundColor: myStatus === 'yes' ? '#06d6a0' : 'transparent',
-                                color: myStatus === 'yes' ? '#000' : '#06d6a0',
-                                fontSize: '12px',
-                                fontWeight: 'bold',
-                                cursor: 'pointer'
-                              }}
-                            >
-                              ✓ Ci sarò
-                            </button>
-                            <button
-                              onClick={() => handleConfirmActivity(a.id, 'no')}
-                              style={{
-                                padding: '6px 12px',
-                                borderRadius: '6px',
-                                border: '1px solid #ff4d4f',
-                                backgroundColor: myStatus === 'no' ? '#ff4d4f' : 'transparent',
-                                color: myStatus === 'no' ? '#fff' : '#ff4d4f',
-                                fontSize: '12px',
-                                fontWeight: 'bold',
-                                cursor: 'pointer'
-                              }}
-                            >
-                              ✗ Non ci sarò
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {(isCoach || isSuperAdmin) && (
-                        <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid #162238', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                          <span style={{ color: '#06d6a0', fontWeight: 'bold' }}>✓ {yesCount} Presenti confermati</span>
-                          <span style={{ color: '#ff4d4f', fontWeight: 'bold' }}>✗ {noCount} Assenti</span>
-                        </div>
-                      )}
+                      {isSuperAdmin && <button onClick={() => deleteActivity(a.id)} style={deleteBtnStyle}>🗑️</button>}
                     </div>
-                  );
-                })}
+
+                    {isAthlete && (
+                      <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid #162238', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: '12px', color: '#889dbf' }}>La tua presenza:</span>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button onClick={() => handleConfirmActivity(a.id, 'yes')} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #06d6a0', backgroundColor: myStatus === 'yes' ? '#06d6a0' : 'transparent', color: myStatus === 'yes' ? '#000' : '#06d6a0', fontSize: '12px', fontWeight: 'bold' }}>✓ Ci sarò</button>
+                          <button onClick={() => handleConfirmActivity(a.id, 'no')} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #ff4d4f', backgroundColor: myStatus === 'no' ? '#ff4d4f' : 'transparent', color: myStatus === 'no' ? '#fff' : '#ff4d4f', fontSize: '12px', fontWeight: 'bold' }}>✗ Non ci sarò</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {(isCoach || isSuperAdmin) && (
+                      <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid #162238', display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                        <span style={{ color: '#06d6a0', fontWeight: 'bold' }}>✓ {yesCount} Presenti confermati</span>
+                        <span style={{ color: '#ff4d4f', fontWeight: 'bold' }}>✗ {noCount} Assenti</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
 
-        {/* 3. PRESENZE & STATISTICHE */}
+        {/* PRESENZE & STATISTICHE */}
         {activeTab === 'presenze' && (
           <div>
             <div style={{ marginBottom: '14px' }}>
               <h1 style={{ fontSize: isMobile ? '20px' : '24px', margin: 0 }}>Presenze & Statistiche</h1>
-              <p style={{ margin: '2px 0 0', color: '#748cae', fontSize: '12px' }}>Appello rapido e monitoraggio frequenza atleti.</p>
+              <p style={{ margin: '2px 0 0', color: '#748cae', fontSize: '12px' }}>Sincronizzato in Cloud per tutti i coach.</p>
             </div>
 
             <div style={{ backgroundColor: '#0e172a', border: '1px solid #1b2844', borderRadius: '8px', padding: '12px', marginBottom: '16px', display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(3, 1fr)', gap: '10px' }}>
               <div>
-                <label style={fieldLabelStyle}>Data Appello:</label>
-                <input
-                  type="date"
-                  value={attendanceDate}
-                  onChange={(e) => setAttendanceDate(e.target.value)}
-                  style={inputStyle}
-                />
+                <label style={fieldLabelStyle}>Data:</label>
+                <input type="date" value={attendanceDate} onChange={(e) => setAttendanceDate(e.target.value)} style={inputStyle} />
               </div>
               <div>
                 <label style={fieldLabelStyle}>Categoria:</label>
-                <select
-                  value={attendanceCategory}
-                  onChange={(e) => setAttendanceCategory(e.target.value)}
-                  style={selectDarkStyle}
-                >
+                <select value={attendanceCategory} onChange={(e) => setAttendanceCategory(e.target.value)} style={selectDarkStyle}>
                   {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               {canManageCategory(attendanceCategory) && (
                 <div style={{ display: 'flex', alignItems: 'flex-end', gridColumn: isMobile ? 'span 2' : 'auto' }}>
-                  <button
-                    onClick={() => markAllPresent(currentAttendanceAthletes)}
-                    style={{ ...actionBtnCyan, width: '100%', height: '44px' }}
-                  >
-                    ✓ Segna tutti Presenti
-                  </button>
+                  <button onClick={() => markAllPresent(currentAttendanceAthletes)} style={{ ...actionBtnCyan, width: '100%', height: '44px' }}>✓ Segna tutti Presenti</button>
                 </div>
               )}
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {currentAttendanceAthletes.length === 0 ? (
-                <p style={{ color: '#5f759c', textAlign: 'center', padding: '20px 0', fontSize: '13px' }}>Nessun atleta registrato in questa categoria.</p>
-              ) : (
-                currentAttendanceAthletes.map(a => {
-                  const dayRecords = attendanceRecords[attendanceDate] || {};
-                  const isPresent = !!dayRecords[a.id];
-                  const stats = getAthleteStats(a.id);
-                  const canEdit = canManageCategory(attendanceCategory);
+              {currentAttendanceAthletes.map(a => {
+                const isPres = !!(attendanceRecords[attendanceDate] && attendanceRecords[attendanceDate][a.id]);
+                const stats = getAthleteStats(a.id);
+                const canEdit = canManageCategory(attendanceCategory);
 
-                  return (
-                    <div
-                      key={a.id}
-                      style={{
-                        backgroundColor: '#0f172a',
-                        border: '1px solid #192642',
-                        borderRadius: '8px',
-                        padding: '12px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <div
-                          onClick={() => canEdit && toggleAttendance(a.id)}
-                          style={{
-                            width: '28px',
-                            height: '28px',
-                            borderRadius: '6px',
-                            border: '2px solid',
-                            borderColor: isPresent ? '#06d6a0' : '#4b5563',
-                            backgroundColor: isPresent ? '#06d6a0' : 'transparent',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: '#000',
-                            fontWeight: 'bold',
-                            fontSize: '16px',
-                            cursor: canEdit ? 'pointer' : 'default'
-                          }}
-                        >
-                          {isPresent ? '✓' : ''}
-                        </div>
-                        <div>
-                          <div style={{ fontWeight: 'bold', fontSize: '14px' }}>{a.name}</div>
-                          <div style={{ fontSize: '11px', color: '#6882a9' }}>
-                            Presenze: <strong style={{ color: '#06d6a0' }}>{stats.attended}</strong> | Assenze: <strong style={{ color: '#ff4d4f' }}>{stats.absent}</strong>
-                          </div>
-                        </div>
+                return (
+                  <div key={a.id} style={{ backgroundColor: '#0f172a', border: '1px solid #192642', borderRadius: '8px', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div onClick={() => canEdit && toggleAttendance(a.id)} style={{ width: '28px', height: '28px', borderRadius: '6px', border: '2px solid', borderColor: isPres ? '#06d6a0' : '#4b5563', backgroundColor: isPres ? '#06d6a0' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#000', fontWeight: 'bold', fontSize: '16px', cursor: canEdit ? 'pointer' : 'default' }}>
+                        {isPres ? '✓' : ''}
                       </div>
-
-                      <div style={{ textAlign: 'right' }}>
-                        <span style={{ fontSize: '14px', fontWeight: 'bold', color: stats.rate >= 80 ? '#06d6a0' : '#f59e0b' }}>
-                          {stats.rate}%
-                        </span>
-                        <div style={{ fontSize: '10px', color: '#6882a9' }}>Frequenza</div>
+                      <div>
+                        <div style={{ fontWeight: 'bold', fontSize: '14px' }}>{a.name}</div>
+                        <div style={{ fontSize: '11px', color: '#6882a9' }}>Presenze: <strong style={{ color: '#06d6a0' }}>{stats.attended}</strong> | Assenze: <strong style={{ color: '#ff4d4f' }}>{stats.absent}</strong></div>
                       </div>
                     </div>
-                  );
-                })
-              )}
+                    <div style={{ textAlign: 'right' }}>
+                      <span style={{ fontSize: '14px', fontWeight: 'bold', color: stats.rate >= 80 ? '#06d6a0' : '#f59e0b' }}>{stats.rate}%</span>
+                      <div style={{ fontSize: '10px', color: '#6882a9' }}>Frequenza</div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
 
-        {/* 4. LIBRERIA VIDEO */}
+        {/* LIBRERIA VIDEO CLOUDFLARE R2 */}
         {activeTab === 'video' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <div>
-                <h1 style={{ fontSize: isMobile ? '20px' : '24px', margin: 0 }}>Libreria Video</h1>
-                <p style={{ margin: '2px 0 0', color: '#748cae', fontSize: '12px' }}>Analisi tecnica discese.</p>
+                <h1 style={{ fontSize: isMobile ? '20px' : '24px', margin: 0 }}>Libreria Video R2</h1>
+                <p style={{ margin: '2px 0 0', color: '#748cae', fontSize: '12px' }}>Video salvati permanentemente nel Cloud.</p>
               </div>
 
               {!isAthlete && (
                 <label style={{ ...actionBtnCyan, padding: isMobile ? '8px 12px' : '8px 16px', fontSize: '12px' }}>
-                  📹 Carica
-                  <input type="file" accept="video/*" onChange={handleFileSelect} style={{ display: 'none' }} />
+                  📹 Carica su R2
+                  <input type="file" accept="video/*" onChange={(e) => {
+                    if (e.target.files[0]) {
+                      setSelectedRawFile(e.target.files[0]);
+                      setVideoDate(new Date().toISOString().split('T')[0]);
+                      setShowUploadModal(true);
+                    }
+                  }} style={{ display: 'none' }} />
                 </label>
               )}
             </div>
 
             {!isAthlete && (
               <div style={{ marginBottom: '14px' }}>
-                <select
-                  value={videoFilterAthlete}
-                  onChange={(e) => setVideoFilterAthlete(e.target.value)}
-                  style={{ ...selectDarkStyle, width: '100%', maxWidth: '280px' }}
-                >
+                <select value={videoFilterAthlete} onChange={(e) => setVideoFilterAthlete(e.target.value)} style={{ ...selectDarkStyle, width: '100%', maxWidth: '280px' }}>
                   <option value="Tutti">📁 Tutti gli Atleti</option>
-                  {members.filter(m => m.role === 'athlete').map(a => (
-                    <option key={a.id} value={a.id}>{a.name} ({a.group})</option>
-                  ))}
+                  {members.filter(m => m.role === 'athlete').map(a => <option key={a.id} value={a.id}>{a.name} ({a.category})</option>)}
                 </select>
               </div>
             )}
 
             {filteredVideos.length === 0 ? (
               <div style={{ backgroundColor: '#0e172a', border: '1px dashed #1e2c47', borderRadius: '8px', padding: '30px', textAlign: 'center', color: '#6882a9', fontSize: '13px' }}>
-                Nessun video presente in questo archivio.
+                Nessun video presente su Cloudflare R2.
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fill, minmax(210px, 1fr))', gap: '10px' }}>
                 {filteredVideos.map(v => (
-                  <div
-                    key={v.id}
-                    style={{
-                      backgroundColor: '#0e172a',
-                      border: '1px solid #1a2742',
-                      borderRadius: '8px',
-                      overflow: 'hidden',
-                      display: 'flex',
-                      flexDirection: 'column'
-                    }}
-                  >
-                    <div
-                      onClick={() => setSelectedVideoPlayer(v)}
-                      style={{ position: 'relative', width: '100%', height: isMobile ? '95px' : '120px', backgroundColor: '#000', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                    >
-                      <video src={v.url} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.7 }} preload="metadata" />
-                      <div style={{ position: 'absolute', width: '32px', height: '32px', borderRadius: '50%', backgroundColor: 'rgba(0, 210, 255, 0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#000', fontSize: '14px', fontWeight: 'bold' }}>
-                        ▶
-                      </div>
-                      <span style={{ position: 'absolute', bottom: '4px', right: '4px', fontSize: '9px', backgroundColor: '#000', padding: '1px 4px', borderRadius: '3px', color: '#00d2ff' }}>
-                        {v.specialty}
-                      </span>
+                  <div key={v.id} style={{ backgroundColor: '#0e172a', border: '1px solid #1a2742', borderRadius: '8px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                    <div onClick={() => setSelectedVideoPlayer(v)} style={{ position: 'relative', width: '100%', height: isMobile ? '95px' : '120px', backgroundColor: '#000', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <video src={v.video_url} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.7 }} preload="metadata" />
+                      <div style={{ position: 'absolute', width: '32px', height: '32px', borderRadius: '50%', backgroundColor: 'rgba(0, 210, 255, 0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#000', fontSize: '14px', fontWeight: 'bold' }}>▶</div>
+                      <span style={{ position: 'absolute', bottom: '4px', right: '4px', fontSize: '9px', backgroundColor: '#000', padding: '1px 4px', borderRadius: '3px', color: '#00d2ff' }}>{v.specialty}</span>
                     </div>
 
                     <div style={{ padding: '8px' }}>
-                      <div style={{ fontWeight: 'bold', fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        👤 {v.athleteName}
-                      </div>
-                      <div style={{ fontSize: '10px', color: '#748cae', marginTop: '2px' }}>
-                        📍 {v.location}
-                      </div>
+                      <div style={{ fontWeight: 'bold', fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>👤 {v.athlete_name}</div>
+                      <div style={{ fontSize: '10px', color: '#748cae', marginTop: '2px' }}>📍 {v.location}</div>
                       <div style={{ fontSize: '10px', color: '#556c8f', marginTop: '2px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span>📅 {v.date}</span>
-                        {!isAthlete && (
-                          <button onClick={(e) => { e.stopPropagation(); deleteVideo(v.id); }} style={{ background: 'none', border: 'none', color: '#ff4d4f', cursor: 'pointer', padding: 0, fontSize: '11px' }}>
-                            🗑️
-                          </button>
-                        )}
+                        {!isAthlete && <button onClick={(e) => { e.stopPropagation(); deleteVideo(v.id); }} style={{ background: 'none', border: 'none', color: '#ff4d4f', cursor: 'pointer', padding: 0, fontSize: '11px' }}>🗑️</button>}
                       </div>
                     </div>
                   </div>
@@ -1155,24 +878,20 @@ export default function App() {
           </div>
         )}
 
-        {/* 5. ATLETI */}
+        {/* ATLETI */}
         {activeTab === 'atleti' && (
           <div>
-            <h1 style={{ fontSize: isMobile ? '20px' : '24px', margin: '0 0 4px 0' }}>Atleti</h1>
-            <p style={{ margin: '0 0 16px 0', color: '#748cae', fontSize: '12px' }}>
-              Atleti divisi per categoria.
-            </p>
+            <h1 style={{ fontSize: isMobile ? '20px' : '24px', margin: '0 0 4px 0' }}>Atleti del Club</h1>
+            <p style={{ margin: '0 0 16px 0', color: '#748cae', fontSize: '12px' }}>Sincronizzati dal database Supabase.</p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {allCategories.map(catName => {
-                const groupAthletes = members.filter(m => m.role === 'athlete' && m.group === catName);
+                const groupAthletes = members.filter(m => m.role === 'athlete' && m.category === catName);
                 const canManageThis = canManageCategory(catName);
 
                 return (
                   <div key={catName} style={{ backgroundColor: '#0e172a', border: '1px solid #1b2844', borderRadius: '8px', padding: '12px' }}>
-                    <div style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '8px', color: '#00d2ff' }}>
-                      {catName} ({groupAthletes.length})
-                    </div>
+                    <div style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '8px', color: '#00d2ff' }}>{catName} ({groupAthletes.length})</div>
 
                     {groupAthletes.length === 0 ? (
                       <p style={{ color: '#5f759c', fontSize: '12px', margin: 0 }}>Nessun atleta in questa categoria.</p>
@@ -1187,20 +906,11 @@ export default function App() {
 
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               {canManageThis && (
-                                <select
-                                  value={a.group}
-                                  onChange={(e) => handleMoveCategory(a.id, e.target.value)}
-                                  style={{ backgroundColor: '#090e1a', color: '#00d2ff', border: '1px solid #1f3357', borderRadius: '4px', padding: '3px 4px', fontSize: '11px' }}
-                                >
+                                <select value={a.category} onChange={(e) => handleMoveCategory(a.id, e.target.value)} style={{ backgroundColor: '#090e1a', color: '#00d2ff', border: '1px solid #1f3357', borderRadius: '4px', padding: '3px 4px', fontSize: '11px' }}>
                                   {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
                                 </select>
                               )}
-
-                              {isSuperAdmin && (
-                                <button onClick={() => deleteMember(a.id)} style={{ background: 'none', border: 'none', color: '#e63946', cursor: 'pointer', fontSize: '12px' }}>
-                                  🗑️
-                                </button>
-                              )}
+                              {isSuperAdmin && <button onClick={() => deleteMember(a.id)} style={{ background: 'none', border: 'none', color: '#e63946', cursor: 'pointer', fontSize: '12px' }}>🗑️</button>}
                             </div>
                           </div>
                         ))}
@@ -1213,31 +923,19 @@ export default function App() {
           </div>
         )}
 
-        {/* 6. GESTIONE CLUB */}
+        {/* GESTIONE CLUB */}
         {activeTab === 'club' && !isAthlete && (
           <div>
             <h1 style={{ fontSize: isMobile ? '20px' : '24px', margin: '0 0 4px 0' }}>Gestione Club</h1>
-            <p style={{ margin: '0 0 16px 0', color: '#748cae', fontSize: '12px' }}>Bardonecchia Ski Academy ({members.length} iscritti)</p>
+            <p style={{ margin: '0 0 16px 0', color: '#748cae', fontSize: '12px' }}>Bardonecchia Ski Academy ({members.length} registrati)</p>
 
             <div style={{ backgroundColor: '#0e172a', border: '1px solid #1b2844', borderRadius: '8px', padding: '14px', marginBottom: '18px' }}>
               <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '8px' }}>Codici Invito Attuali</div>
               <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: '10px' }}>
-                <div>
-                  <span style={{ fontSize: '10px', color: '#748cae', display: 'block' }}>COACH PULCINI</span>
-                  <code style={codeBoxStyle}>{inviteCodes.coachPulcini}</code>
-                </div>
-                <div>
-                  <span style={{ fontSize: '10px', color: '#748cae', display: 'block' }}>COACH GRANDI</span>
-                  <code style={codeBoxStyle}>{inviteCodes.coachGrandi}</code>
-                </div>
-                <div>
-                  <span style={{ fontSize: '10px', color: '#748cae', display: 'block' }}>ATLETI PULCINI</span>
-                  <code style={codeBoxStyle}>{inviteCodes.athletePulcini}</code>
-                </div>
-                <div>
-                  <span style={{ fontSize: '10px', color: '#748cae', display: 'block' }}>ATLETI GRANDI</span>
-                  <code style={codeBoxStyle}>{inviteCodes.athleteGrandi}</code>
-                </div>
+                <div><span style={{ fontSize: '10px', color: '#748cae', display: 'block' }}>COACH PULCINI</span><code style={codeBoxStyle}>{inviteCodes.coachPulcini}</code></div>
+                <div><span style={{ fontSize: '10px', color: '#748cae', display: 'block' }}>COACH GRANDI</span><code style={codeBoxStyle}>{inviteCodes.coachGrandi}</code></div>
+                <div><span style={{ fontSize: '10px', color: '#748cae', display: 'block' }}>ATLETI PULCINI</span><code style={codeBoxStyle}>{inviteCodes.athletePulcini}</code></div>
+                <div><span style={{ fontSize: '10px', color: '#748cae', display: 'block' }}>ATLETI GRANDI</span><code style={codeBoxStyle}>{inviteCodes.athleteGrandi}</code></div>
               </div>
             </div>
 
@@ -1246,52 +944,33 @@ export default function App() {
               {members.map(m => (
                 <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#0e172a', padding: '10px 12px', borderRadius: '6px', border: '1px solid #1b2844' }}>
                   <div style={{ overflow: 'hidden', paddingRight: '8px' }}>
-                    <div style={{ fontWeight: 'bold', fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name}</div>
-                    <div style={{ fontSize: '11px', color: '#6882a9', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.email}</div>
+                    <div style={{ fontWeight: 'bold', fontSize: '13px' }}>{m.name}</div>
+                    <div style={{ fontSize: '11px', color: '#6882a9' }}>{m.email}</div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '11px', backgroundColor: '#13233d', padding: '2px 6px', borderRadius: '4px', color: '#00d2ff' }}>
-                      {m.role === 'superadmin' ? 'Admin' : m.role === 'coach' ? `Coach (${m.sector})` : m.group}
-                    </span>
-
-                    {isSuperAdmin && m.id !== currentUser.id && (
-                      <button onClick={() => deleteMember(m.id)} style={deleteBtnStyle}>
-                        🗑️
-                      </button>
-                    )}
-                  </div>
+                  <span style={{ fontSize: '11px', backgroundColor: '#13233d', padding: '2px 6px', borderRadius: '4px', color: '#00d2ff' }}>{m.role === 'superadmin' ? 'Admin' : m.role === 'coach' ? `Coach (${m.sector})` : m.category}</span>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* 7. SUPER ADMIN */}
+        {/* SUPER ADMIN RECUPERO CREDENZIALI */}
         {activeTab === 'admin' && isSuperAdmin && (
           <div>
             <h1 style={{ fontSize: isMobile ? '20px' : '24px', margin: '0 0 4px 0' }}>Super Admin</h1>
-            <p style={{ margin: '0 0 16px 0', color: '#748cae', fontSize: '12px' }}>Recupero password e credenziali del club.</p>
+            <p style={{ margin: '0 0 16px 0', color: '#748cae', fontSize: '12px' }}>Recupero password centralizzato da Database.</p>
 
             <div style={{ backgroundColor: '#0e172a', border: '1px solid #1b2844', borderRadius: '8px', padding: '14px', marginBottom: '20px' }}>
               <h3 style={{ marginTop: 0, fontSize: '14px', color: '#00d2ff' }}>🔑 Registro Utenti & Password</h3>
-              <p style={{ fontSize: '12px', color: '#748cae', marginBottom: '12px' }}>
-                Puoi recuperare o comunicare la password di qualsiasi membro:
-              </p>
-
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {members.map(m => (
                   <div key={m.id} style={{ backgroundColor: '#131e36', padding: '10px 12px', borderRadius: '6px', border: '1px solid #1e2c47' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontWeight: 'bold', fontSize: '13px' }}>{m.name}</span>
-                      <span style={{ fontSize: '11px', color: '#00d2ff', backgroundColor: '#090e1a', padding: '1px 6px', borderRadius: '4px' }}>
-                        {m.role} {m.group !== 'Tutti' && `• ${m.group}`}
-                      </span>
+                      <span style={{ fontSize: '11px', color: '#00d2ff' }}>{m.role} • {m.category}</span>
                     </div>
                     <div style={{ fontSize: '11px', color: '#7e92b3', marginTop: '3px' }}>✉️ {m.email}</div>
-                    <div style={{ fontSize: '12px', color: '#06d6a0', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <span>Password:</span>
-                      <strong style={{ fontFamily: 'monospace', backgroundColor: '#090e1a', padding: '1px 6px', borderRadius: '3px' }}>{m.password}</strong>
-                    </div>
+                    <div style={{ fontSize: '12px', color: '#06d6a0', marginTop: '4px' }}>Password: <strong style={{ fontFamily: 'monospace', backgroundColor: '#090e1a', padding: '1px 6px', borderRadius: '3px' }}>{m.password}</strong></div>
                   </div>
                 ))}
               </div>
@@ -1308,7 +987,7 @@ export default function App() {
                   <label style={fieldLabelStyle}>Nuova Password:</label>
                   <input type="password" placeholder="Nuova password..." value={editAdminPassword} onChange={(e) => setEditAdminPassword(e.target.value)} style={inputStyle} />
                 </div>
-                <button type="submit" style={actionBtnCyan}>Salva Credenziali</button>
+                <button type="submit" style={actionBtnCyan}>Salva su Database</button>
               </form>
             </div>
           </div>
@@ -1318,20 +997,7 @@ export default function App() {
 
       {/* BOTTOM BAR MOBILE */}
       {isMobile && (
-        <nav style={{
-          position: 'fixed',
-          bottom: 0,
-          left: 0,
-          width: '100%',
-          height: '64px',
-          backgroundColor: '#0b1120',
-          borderTop: '1px solid #162238',
-          display: 'flex',
-          justifyContent: 'space-around',
-          alignItems: 'center',
-          zIndex: 1000,
-          paddingBottom: 'env(safe-area-inset-bottom)'
-        }}>
+        <nav style={{ position: 'fixed', bottom: 0, left: 0, width: '100%', height: '64px', backgroundColor: '#0b1120', borderTop: '1px solid #162238', display: 'flex', justifyContent: 'space-around', alignItems: 'center', zIndex: 1000, paddingBottom: 'env(safe-area-inset-bottom)' }}>
           {[
             { id: 'dashboard', label: 'Home', icon: '📊' },
             { id: 'programmazione', label: 'Programma', icon: '📅' },
@@ -1341,23 +1007,7 @@ export default function App() {
             ...(!isAthlete ? [{ id: 'club', label: 'Club', icon: '⚙️' }] : []),
             ...(isSuperAdmin ? [{ id: 'admin', label: 'Admin', icon: '🛡️' }] : []),
           ].map(item => (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: activeTab === item.id ? '#00d2ff' : '#6882a9',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: '2px',
-                fontSize: '10px',
-                fontWeight: activeTab === item.id ? 'bold' : 'normal',
-                cursor: 'pointer',
-                padding: '4px'
-              }}
-            >
+            <button key={item.id} onClick={() => setActiveTab(item.id)} style={{ background: 'none', border: 'none', color: activeTab === item.id ? '#00d2ff' : '#6882a9', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', fontSize: '10px', fontWeight: activeTab === item.id ? 'bold' : 'normal', cursor: 'pointer', padding: '4px' }}>
               <span style={{ fontSize: '18px' }}>{item.icon}</span>
               <span>{item.label}</span>
             </button>
@@ -1365,12 +1015,12 @@ export default function App() {
         </nav>
       )}
 
-      {/* MODALE DI CARICAMENTO VIDEO */}
+      {/* MODALE DI CARICAMENTO VIDEO CON SPEDIZIONE A CLOUDFLARE R2 */}
       {showUploadModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center', zIndex: 9999 }}>
           <div style={{ backgroundColor: '#0e172a', border: '1px solid #1b2844', padding: '20px', borderRadius: isMobile ? '16px 16px 0 0' : '8px', width: '100%', maxWidth: '380px' }}>
-            <h3 style={{ margin: '0 0 14px 0', fontSize: '16px', color: '#00d2ff' }}>📁 Scheda Video Discesa</h3>
-            <form onSubmit={handleSaveVideo}>
+            <h3 style={{ margin: '0 0 14px 0', fontSize: '16px', color: '#00d2ff' }}>📁 Carica su Cloudflare R2</h3>
+            <form onSubmit={handleUploadToCloudflare}>
               <div style={{ marginBottom: '10px' }}>
                 <label style={fieldLabelStyle}>Specialità:</label>
                 <select value={videoSpecialty} onChange={(e) => setVideoSpecialty(e.target.value)} style={selectDarkStyle}>
@@ -1386,9 +1036,7 @@ export default function App() {
                 <label style={fieldLabelStyle}>Tagga Atleta:</label>
                 <select required value={videoTaggedAthleteId} onChange={(e) => setVideoTaggedAthleteId(e.target.value)} style={selectDarkStyle}>
                   <option value="">-- Seleziona Atleta --</option>
-                  {members.filter(m => m.role === 'athlete').map(a => (
-                    <option key={a.id} value={a.id}>{a.name} ({a.group})</option>
-                  ))}
+                  {members.filter(m => m.role === 'athlete').map(a => <option key={a.id} value={a.id}>{a.name} ({a.category})</option>)}
                 </select>
               </div>
 
@@ -1409,8 +1057,10 @@ export default function App() {
               </div>
 
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button type="submit" style={{ ...actionBtnCyan, flex: 1, padding: '12px' }}>Salva Video</button>
-                <button type="button" onClick={() => { setShowUploadModal(false); setTempVideoFile(null); }} style={{ ...controlBtn, flex: 1, padding: '12px' }}>Annulla</button>
+                <button type="submit" disabled={uploading} style={{ ...actionBtnCyan, flex: 1, padding: '12px' }}>
+                  {uploading ? 'Caricamento R2 in corso...' : 'Invia a Cloudflare R2'}
+                </button>
+                <button type="button" disabled={uploading} onClick={() => { setShowUploadModal(false); setSelectedRawFile(null); }} style={{ ...controlBtn, flex: 1, padding: '12px' }}>Annulla</button>
               </div>
             </form>
           </div>
@@ -1423,16 +1073,14 @@ export default function App() {
           <div style={{ backgroundColor: '#090e1a', border: '1px solid #1a2742', borderRadius: '8px', padding: isMobile ? '10px' : '16px', maxWidth: '780px', width: '100%', maxHeight: '96vh', overflowY: 'auto' }}>
             
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <div style={{ fontSize: '13px', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {selectedVideoPlayer.specialty} • {selectedVideoPlayer.athleteName}
-              </div>
-              <button onClick={() => setSelectedVideoPlayer(null)} style={{ background: 'none', border: 'none', color: '#ff4d4f', fontSize: '18px', cursor: 'pointer', padding: '4px' }}>✖</button>
+              <div style={{ fontSize: '13px', fontWeight: 'bold' }}>{selectedVideoPlayer.specialty} • {selectedVideoPlayer.athlete_name}</div>
+              <button onClick={() => setSelectedVideoPlayer(null)} style={{ background: 'none', border: 'none', color: '#ff4d4f', fontSize: '18px', cursor: 'pointer' }}>✖</button>
             </div>
 
             <div style={{ position: 'relative', width: '100%', maxHeight: isMobile ? '55vh' : '480px', backgroundColor: '#000', borderRadius: '6px', overflow: 'hidden' }}>
               <video
                 ref={videoRef}
-                src={selectedVideoPlayer.url}
+                src={selectedVideoPlayer.video_url}
                 playsInline
                 webkit-playsinline="true"
                 style={{ width: '100%', maxHeight: isMobile ? '55vh' : '480px', display: 'block', margin: '0 auto' }}
@@ -1448,16 +1096,7 @@ export default function App() {
                 onPointerDown={startDraw}
                 onPointerMove={draw}
                 onPointerUp={() => setIsDrawing(false)}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: '100%',
-                  touchAction: 'none',
-                  cursor: (!isPlaying && !isAthlete) ? 'crosshair' : 'default',
-                  pointerEvents: (!isPlaying && !isAthlete) ? 'auto' : 'none'
-                }}
+                style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', touchAction: 'none', cursor: (!isPlaying && !isAthlete) ? 'crosshair' : 'default', pointerEvents: (!isPlaying && !isAthlete) ? 'auto' : 'none' }}
               />
             </div>
 
@@ -1470,9 +1109,7 @@ export default function App() {
               
               <div style={{ display: 'flex', gap: '4px', width: isMobile ? '100%' : 'auto', justifyContent: 'space-around', marginTop: isMobile ? '4px' : '0' }}>
                 {[0.2, 0.5, 1.0].map(rate => (
-                  <button key={rate} onClick={() => { if (videoRef.current) videoRef.current.playbackRate = rate; }} style={{ ...controlBtn, flex: isMobile ? 1 : 'none', padding: '8px' }}>
-                    {rate}×
-                  </button>
+                  <button key={rate} onClick={() => { if (videoRef.current) videoRef.current.playbackRate = rate; }} style={{ ...controlBtn, flex: isMobile ? 1 : 'none', padding: '8px' }}>{rate}×</button>
                 ))}
               </div>
 
@@ -1480,12 +1117,7 @@ export default function App() {
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', width: '100%', marginTop: '6px', borderTop: '1px solid #162238', paddingTop: '8px' }}>
                   <label style={{ fontSize: '11px', color: '#748cae' }}>Colore:</label>
                   <input type="color" value={drawColor} onChange={(e) => setDrawColor(e.target.value)} style={{ background: 'none', border: 'none', width: '28px', height: '24px', cursor: 'pointer' }} />
-                  <button onClick={() => { if (canvasRef.current) canvasRef.current.getContext('2d').clearRect(0, 0, canvasRef.current.width, canvasRef.current.height); }} style={{ ...controlBtn, backgroundColor: '#2d1518', color: '#ff4d4f', border: '1px solid #5a1c24', padding: '6px 10px' }}>
-                    Cancella Tratti
-                  </button>
-                  <span style={{ fontSize: '10px', color: '#6882a9', marginLeft: 'auto' }}>
-                    Pausa per disegnare
-                  </span>
+                  <button onClick={() => { if (canvasRef.current) canvasRef.current.getContext('2d').clearRect(0, 0, canvasRef.current.width, canvasRef.current.height); }} style={{ ...controlBtn, backgroundColor: '#2d1518', color: '#ff4d4f', border: '1px solid #5a1c24', padding: '6px 10px' }}>Cancella Tratti</button>
                 </div>
               )}
             </div>
@@ -1537,7 +1169,7 @@ export default function App() {
   );
 }
 
-// --- STILI CSS-IN-JS ---
+// Stili
 const sidebarStyle = { width: '230px', backgroundColor: '#0b1120', borderRight: '1px solid #141e33', padding: '24px 16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' };
 const logoIconStyle = { width: '32px', height: '32px', borderRadius: '8px', backgroundColor: '#00d2ff', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '18px' };
 const navBtnStyle = (active) => ({ width: '100%', textAlign: 'left', padding: '10px 14px', borderRadius: '6px', border: 'none', backgroundColor: active ? '#101d36' : 'transparent', color: active ? '#00d2ff' : '#889ebf', fontWeight: active ? 'bold' : 'normal', fontSize: '14px', cursor: 'pointer' });
