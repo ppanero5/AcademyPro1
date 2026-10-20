@@ -53,7 +53,7 @@ export default function App() {
   ];
   const [members, setMembers] = useState([]);
 
-  // Attività di programma con conferme presenze
+  // Attività di programma
   const defaultActivities = [
     {
       id: 1,
@@ -63,7 +63,7 @@ export default function App() {
       date: '2026-10-22',
       time: '08:30 - 12:00',
       targetGroup: 'Allievi',
-      confirmations: {} // { athleteId: 'yes' | 'no' }
+      confirmations: {}
     }
   ];
   const [activities, setActivities] = useState([]);
@@ -73,10 +73,10 @@ export default function App() {
   const [newActGroup, setNewActGroup] = useState('Baby');
   const [newActDate, setNewActDate] = useState('');
 
-  // --- STATO REGISTRO PRESENZE GIORNALIERE ---
+  // --- STATO REGISTRO PRESENZE ---
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   const [attendanceCategory, setAttendanceCategory] = useState('Baby');
-  const [attendanceRecords, setAttendanceRecords] = useState({}); // { 'YYYY-MM-DD': { athleteId: true/false } }
+  const [attendanceRecords, setAttendanceRecords] = useState({});
 
   // --- LIBRERIA VIDEO & PLAYER ---
   const [videos, setVideos] = useState([]);
@@ -100,7 +100,7 @@ export default function App() {
   const [editAdminEmail, setEditAdminEmail] = useState('');
   const [editAdminPassword, setEditAdminPassword] = useState('');
 
-  // Responsive mobile detector
+  // Rilevamento viewport mobile
   useEffect(() => {
     setMounted(true);
     const checkViewport = () => setIsMobile(window.innerWidth < 768);
@@ -109,11 +109,26 @@ export default function App() {
     return () => window.removeEventListener('resize', checkViewport);
   }, []);
 
-  // Caricamento persistente iniziale
+  // --- LETTURA PERSISTENTE LOGIN ALL'AVVIO (LOCALSTORAGE + COOKIE 365 GIORNI) ---
   useEffect(() => {
     try {
-      const savedUser = localStorage.getItem('academy_user');
-      if (savedUser) setCurrentUser(JSON.parse(savedUser));
+      let savedUser = localStorage.getItem('academy_user');
+      
+      // Controllo cookie nel caso l'app si apra da standalone Home Screen su iPhone
+      if (!savedUser) {
+        const match = document.cookie.match(new RegExp('(^| )academy_user=([^;]+)'));
+        if (match) {
+          savedUser = decodeURIComponent(match[2]);
+        }
+      }
+
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        setCurrentUser(parsed);
+        // Sincronizza entrambi i sistemi di memoria
+        localStorage.setItem('academy_user', JSON.stringify(parsed));
+        document.cookie = `academy_user=${encodeURIComponent(JSON.stringify(parsed))}; path=/; max-age=31536000; SameSite=Lax`;
+      }
 
       const savedMembers = localStorage.getItem('academy_members');
       if (savedMembers) {
@@ -139,7 +154,9 @@ export default function App() {
 
       const savedAtt = localStorage.getItem('academy_attendance');
       if (savedAtt) setAttendanceRecords(JSON.parse(savedAtt));
-    } catch (e) {}
+    } catch (e) {
+      console.error(e);
+    }
   }, []);
 
   const persistMembers = (list) => {
@@ -162,7 +179,7 @@ export default function App() {
     try { localStorage.setItem('academy_attendance', JSON.stringify(att)); } catch (e) {}
   };
 
-  // --- LOGIN PERMANENTE ---
+  // --- LOGIN CON SCRITTURA COOKIE PERMANENTE ---
   const handleLogin = (e) => {
     e.preventDefault();
     setAuthError('');
@@ -181,13 +198,16 @@ export default function App() {
       return;
     }
 
-    // Salvataggio permanente nel browser
     setCurrentUser(user);
-    try { localStorage.setItem('academy_user', JSON.stringify(user)); } catch (e) {}
+    try {
+      const userStr = JSON.stringify(user);
+      localStorage.setItem('academy_user', userStr);
+      document.cookie = `academy_user=${encodeURIComponent(userStr)}; path=/; max-age=31536000; SameSite=Lax`;
+    } catch (e) {}
     setLoginPassword('');
   };
 
-  // --- REGISTRAZIONE CON 4 CODICI INVITO ---
+  // --- REGISTRAZIONE CON SCRITTURA COOKIE PERMANENTE ---
   const handleRegister = (e) => {
     e.preventDefault();
     setAuthError('');
@@ -225,7 +245,6 @@ export default function App() {
       return;
     }
 
-    // Se atleta, verifica che abbia scelto una categoria coerente col settore
     let finalGroup = regGroup;
     if (assignedRole === 'athlete') {
       if (assignedSector === 'pulcini' && !pulciniCategories.includes(regGroup)) {
@@ -258,21 +277,23 @@ export default function App() {
     setRegPassword('');
     setRegInviteCode('');
     setLoginEmail(cleanEmail);
-    setAuthSuccess('Registrazione avvenuta con successo! Inserisci la password per accedere.');
+    setAuthSuccess('Registrazione completata! Inserisci la password per accedere.');
     setAuthTab('login');
   };
 
+  // --- LOGOUT CON CANCELLAZIONE COOKIE ---
   const logout = () => {
     setCurrentUser(null);
-    try { localStorage.removeItem('academy_user'); } catch (e) {}
+    try {
+      localStorage.removeItem('academy_user');
+      document.cookie = 'academy_user=; path=/; max-age=0';
+    } catch (e) {}
   };
 
-  // --- PERMESSI ---
   const isSuperAdmin = currentUser?.role === 'superadmin';
   const isCoach = currentUser?.role === 'coach';
   const isAthlete = currentUser?.role === 'athlete';
 
-  // Verifica se l'utente può operare su una categoria specifica
   const canManageCategory = (catName) => {
     if (isSuperAdmin) return true;
     if (!isCoach) return false;
@@ -281,7 +302,6 @@ export default function App() {
     return false;
   };
 
-  // --- GESTIONE PRESENZE GIORNALIERE ---
   const toggleAttendance = (athleteId) => {
     const dayRecords = attendanceRecords[attendanceDate] || {};
     const newStatus = !dayRecords[athleteId];
@@ -307,7 +327,6 @@ export default function App() {
     persistAttendance(updated);
   };
 
-  // Calcolo Statistiche Atleta
   const getAthleteStats = (athleteId) => {
     let attended = 0;
     let absent = 0;
@@ -323,7 +342,6 @@ export default function App() {
     return { attended, absent, total, rate };
   };
 
-  // --- CONFERME ATTIVITÀ ---
   const handleConfirmActivity = (activityId, response) => {
     const updated = activities.map(act => {
       if (act.id === activityId) {
@@ -340,7 +358,6 @@ export default function App() {
     persistActivities(updated);
   };
 
-  // --- GESTIONE VIDEO ---
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -385,7 +402,6 @@ export default function App() {
     }
   };
 
-  // Canvas Drawing Telestrator
   const getCoords = (e) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
@@ -475,7 +491,11 @@ export default function App() {
     persistMembers(updated);
     const me = updated.find(m => m.role === 'superadmin');
     setCurrentUser(me);
-    try { localStorage.setItem('academy_user', JSON.stringify(me)); } catch (e) {}
+    try {
+      const userStr = JSON.stringify(me);
+      localStorage.setItem('academy_user', userStr);
+      document.cookie = `academy_user=${encodeURIComponent(userStr)}; path=/; max-age=31536000; SameSite=Lax`;
+    } catch (e) {}
     alert('Credenziali Super Admin aggiornate!');
   };
 
@@ -654,21 +674,18 @@ export default function App() {
     );
   }
 
-  // Filtri video in base al ruolo e settore
   const filteredVideos = videos.filter(v => {
     if (isAthlete) return v.athleteId === currentUser.id;
     if (videoFilterAthlete === 'Tutti') return true;
     return v.athleteId === videoFilterAthlete;
   });
 
-  // Filtro attività visibili
   const visibleActivities = activities.filter(a => {
     if (isSuperAdmin) return true;
     if (isAthlete) return a.targetGroup === currentUser.group || a.targetGroup === 'Tutti';
-    return true; // I coach possono vedere tutte le attività
+    return true;
   });
 
-  // Elenco atleti per il registro presenze
   const currentAttendanceAthletes = members
     .filter(m => m.role === 'athlete' && m.group === attendanceCategory)
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -831,7 +848,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 2. PROGRAMMAZIONE & CONFERME PRESENZE */}
+        {/* 2. PROGRAMMAZIONE */}
         {activeTab === 'programmazione' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
@@ -933,7 +950,6 @@ export default function App() {
                         </div>
                       )}
 
-                      {/* RIEPILOGO CONFERME PER COACH E SUPER ADMIN */}
                       {(isCoach || isSuperAdmin) && (
                         <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid #162238', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
                           <span style={{ color: '#06d6a0', fontWeight: 'bold' }}>✓ {yesCount} Presenti confermati</span>
@@ -947,7 +963,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 3. SEZIONE PRESENZE & STATISTICHE (NUOVA) */}
+        {/* 3. PRESENZE & STATISTICHE */}
         {activeTab === 'presenze' && (
           <div>
             <div style={{ marginBottom: '14px' }}>
@@ -955,7 +971,6 @@ export default function App() {
               <p style={{ margin: '2px 0 0', color: '#748cae', fontSize: '12px' }}>Appello rapido e monitoraggio frequenza atleti.</p>
             </div>
 
-            {/* Filtri Data e Categoria */}
             <div style={{ backgroundColor: '#0e172a', border: '1px solid #1b2844', borderRadius: '8px', padding: '12px', marginBottom: '16px', display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(3, 1fr)', gap: '10px' }}>
               <div>
                 <label style={fieldLabelStyle}>Data Appello:</label>
@@ -988,7 +1003,6 @@ export default function App() {
               )}
             </div>
 
-            {/* Elenco Alfabetico con Checkbox e Statistiche */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {currentAttendanceAthletes.length === 0 ? (
                 <p style={{ color: '#5f759c', textAlign: 'center', padding: '20px 0', fontSize: '13px' }}>Nessun atleta registrato in questa categoria.</p>
@@ -1013,7 +1027,6 @@ export default function App() {
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        {/* Checkbox Touch */}
                         <div
                           onClick={() => canEdit && toggleAttendance(a.id)}
                           style={{
@@ -1253,7 +1266,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 7. SUPER ADMIN: RECUPERO PASSWORD */}
+        {/* 7. SUPER ADMIN */}
         {activeTab === 'admin' && isSuperAdmin && (
           <div>
             <h1 style={{ fontSize: isMobile ? '20px' : '24px', margin: '0 0 4px 0' }}>Super Admin</h1>
@@ -1524,7 +1537,7 @@ export default function App() {
   );
 }
 
-// --- STILI CSS-IN-JS OTTIMIZZATI TOUCH ---
+// --- STILI CSS-IN-JS ---
 const sidebarStyle = { width: '230px', backgroundColor: '#0b1120', borderRight: '1px solid #141e33', padding: '24px 16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' };
 const logoIconStyle = { width: '32px', height: '32px', borderRadius: '8px', backgroundColor: '#00d2ff', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '18px' };
 const navBtnStyle = (active) => ({ width: '100%', textAlign: 'left', padding: '10px 14px', borderRadius: '6px', border: 'none', backgroundColor: active ? '#101d36' : 'transparent', color: active ? '#00d2ff' : '#889ebf', fontWeight: active ? 'bold' : 'normal', fontSize: '14px', cursor: 'pointer' });
