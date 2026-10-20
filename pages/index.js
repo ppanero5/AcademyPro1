@@ -23,17 +23,17 @@ export default function App() {
   const [regInviteCode, setRegInviteCode] = useState('');
   const [regGroup, setRegGroup] = useState('Allievi');
 
-  // Codici di invito ufficiali richiesti
+  // Codici di invito ufficiali
   const defaultCodes = {
     coach: 'CO26',
-    athlete: 'BRAT26'
+    athlete: 'AT26'
   };
   const [inviteCodes, setInviteCodes] = useState(defaultCodes);
 
-  // Elenco Categorie
+  // Categorie
   const categoriesList = ['Superbaby', 'Baby', 'Cuccioli', 'Ragazzi', 'Allievi', 'Giovani', 'Master'];
 
-  // Super Admin di base per primo accesso
+  // Utenti / Membri di base
   const defaultMembers = [
     {
       id: '1',
@@ -45,10 +45,9 @@ export default function App() {
       club: 'Bardonecchia Ski Academy'
     }
   ];
-
   const [members, setMembers] = useState([]);
 
-  // Attività di programma
+  // Attività Programmazione
   const defaultActivities = [
     {
       id: 1,
@@ -68,16 +67,28 @@ export default function App() {
   const [newActGroup, setNewActGroup] = useState('Allievi');
   const [newActDate, setNewActDate] = useState('');
 
-  // Modifica Admin
-  const [editAdminEmail, setEditAdminEmail] = useState('');
-  const [editAdminPassword, setEditAdminPassword] = useState('');
+  // --- LIBRERIA VIDEO & MODALE UPLOAD ---
+  const [videos, setVideos] = useState([]);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [tempVideoFile, setTempVideoFile] = useState(null);
+  const [videoSpecialty, setVideoSpecialty] = useState('Slalom Gigante');
+  const [videoDate, setVideoDate] = useState('');
+  const [videoLocation, setVideoLocation] = useState('Bardonecchia');
+  const [videoSlope, setVideoSlope] = useState('');
+  const [videoTaggedAthleteId, setVideoTaggedAthleteId] = useState('');
+  const [selectedVideoPlayer, setSelectedVideoPlayer] = useState(null);
+  const [videoFilterAthlete, setVideoFilterAthlete] = useState('Tutti');
 
-  // Video Analyzer
+  // Player & Telestrator
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const [currentVideoSrc, setCurrentVideoSrc] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [drawColor, setDrawColor] = useState('#00d2ff');
+
+  // Gestione Credenziali Super Admin
+  const [editAdminEmail, setEditAdminEmail] = useState('');
+  const [editAdminPassword, setEditAdminPassword] = useState('');
 
   useEffect(() => {
     setMounted(true);
@@ -103,6 +114,9 @@ export default function App() {
       const savedActs = localStorage.getItem('academy_acts');
       if (savedActs) setActivities(JSON.parse(savedActs));
       else setActivities(defaultActivities);
+
+      const savedVideos = localStorage.getItem('academy_videos');
+      if (savedVideos) setVideos(JSON.parse(savedVideos));
     } catch (e) {}
   }, []);
 
@@ -114,6 +128,11 @@ export default function App() {
   const persistActivities = (acts) => {
     setActivities(acts);
     try { localStorage.setItem('academy_acts', JSON.stringify(acts)); } catch (e) {}
+  };
+
+  const persistVideos = (vids) => {
+    setVideos(vids);
+    try { localStorage.setItem('academy_videos', JSON.stringify(vids)); } catch (e) {}
   };
 
   // --- LOGIN ---
@@ -157,7 +176,6 @@ export default function App() {
       return;
     }
 
-    // Verifica codici
     const cleanCode = regInviteCode.trim().toUpperCase();
     let assignedRole = '';
 
@@ -166,7 +184,7 @@ export default function App() {
     } else if (cleanCode === inviteCodes.athlete.toUpperCase()) {
       assignedRole = 'athlete';
     } else {
-      setAuthError('Codice invito non valido! Inserisci BRAT26 (Atleta) o CO26 (Allenatore).');
+      setAuthError('Codice di invito non valido! Controlla con il tuo club.');
       return;
     }
 
@@ -183,7 +201,6 @@ export default function App() {
     const updated = [...members, newUser];
     persistMembers(updated);
 
-    // Reset campi e reindirizzamento al login
     setRegName('');
     setRegSurname('');
     setRegEmail('');
@@ -199,13 +216,92 @@ export default function App() {
     try { localStorage.removeItem('academy_user'); } catch (e) {}
   };
 
-  // Spostamento Categoria
+  // --- GESTIONE VIDEO ---
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setTempVideoFile(url);
+      setVideoDate(new Date().toISOString().split('T')[0]);
+      setShowUploadModal(true);
+    }
+  };
+
+  const handleSaveVideo = (e) => {
+    e.preventDefault();
+    if (!tempVideoFile) return;
+
+    const taggedAthlete = members.find(m => m.id === videoTaggedAthleteId);
+
+    const newVideo = {
+      id: Date.now(),
+      url: tempVideoFile,
+      specialty: videoSpecialty,
+      date: videoDate,
+      location: videoLocation || 'Bardonecchia',
+      slope: videoSlope || 'Pista Standard',
+      athleteId: videoTaggedAthleteId,
+      athleteName: taggedAthlete ? taggedAthlete.name : 'Non Taggato',
+      athleteGroup: taggedAthlete ? taggedAthlete.group : 'Generale',
+      uploadedBy: currentUser.name
+    };
+
+    const updated = [newVideo, ...videos];
+    persistVideos(updated);
+    setShowUploadModal(false);
+    setTempVideoFile(null);
+    setVideoSlope('');
+    alert('Video caricato e indicizzato con successo!');
+  };
+
+  const deleteVideo = (id) => {
+    if (confirm('Vuoi cancellare questo video?')) {
+      const updated = videos.filter(v => v.id !== id);
+      persistVideos(updated);
+      if (selectedVideoPlayer?.id === id) setSelectedVideoPlayer(null);
+    }
+  };
+
+  // Canvas Video Player Drawing
+  const getCoords = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.clientX ?? (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+    const clientY = e.clientY ?? (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  };
+
+  const startDraw = (e) => {
+    // Il disegno è consentito SOLO a Coach e Super Admin
+    if (isPlaying || currentUser.role === 'athlete') return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const { x, y } = getCoords(e);
+    ctx.strokeStyle = drawColor;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    setIsDrawing(true);
+  };
+
+  const draw = (e) => {
+    if (!isDrawing || currentUser.role === 'athlete') return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const { x, y } = getCoords(e);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+
+  // Modifica e Spostamento Categorie
   const handleMoveCategory = (athleteId, newCat) => {
     const updated = members.map(m => (m.id === athleteId ? { ...m, group: newCat } : m));
     persistMembers(updated);
   };
 
-  // Eliminazione Membro
   const deleteMember = (id) => {
     if (confirm('Sei sicuro di voler eliminare definitivamente questo utente?')) {
       const updated = members.filter(m => m.id !== id);
@@ -213,7 +309,6 @@ export default function App() {
     }
   };
 
-  // Eliminazione Attività
   const deleteActivity = (id) => {
     if (confirm('Vuoi eliminare questa attività?')) {
       const updated = activities.filter(a => a.id !== id);
@@ -260,48 +355,14 @@ export default function App() {
     alert('Credenziali Super Admin aggiornate!');
   };
 
-  // Video Canvas Drawing
-  const getCoords = (e) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return { x: 0, y: 0 };
-    const rect = canvas.getBoundingClientRect();
-    const clientX = e.clientX ?? (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
-    const clientY = e.clientY ?? (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
-    return { x: clientX - rect.left, y: clientY - rect.top };
-  };
-
-  const startDraw = (e) => {
-    if (isPlaying) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const { x, y } = getCoords(e);
-    ctx.strokeStyle = '#00d2ff';
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    setIsDrawing(true);
-  };
-
-  const draw = (e) => {
-    if (!isDrawing) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    const { x, y } = getCoords(e);
-    ctx.lineTo(x, y);
-    ctx.stroke();
-  };
-
   if (!mounted) return null;
 
   // ==========================================
-  // SCHERMATA INIZIALE: ACCEDI O REGISTRATI
+  // SCHERMATA LOGIN & REGISTRAZIONE
   // ==========================================
   if (!currentUser) {
     return (
       <div style={loginContainerStyle}>
-        {/* Banner Grafico */}
         <div style={loginHeroStyle}>
           <div style={{ position: 'absolute', bottom: '40px', left: '40px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
@@ -314,11 +375,8 @@ export default function App() {
           </div>
         </div>
 
-        {/* Riquadro Form */}
         <div style={loginFormStyle}>
           <div style={{ width: '100%', maxWidth: '380px' }}>
-            
-            {/* Tasti di Scelta Scheda: Accedi o Registrati */}
             <div style={{ display: 'flex', borderBottom: '2px solid #1a2742', marginBottom: '24px' }}>
               <button
                 type="button"
@@ -368,7 +426,6 @@ export default function App() {
               </div>
             )}
 
-            {/* SEZIONE 1: ACCEDI */}
             {authTab === 'login' && (
               <form onSubmit={handleLogin}>
                 <div style={{ marginBottom: '14px' }}>
@@ -400,7 +457,6 @@ export default function App() {
               </form>
             )}
 
-            {/* SEZIONE 2: REGISTRATI */}
             {authTab === 'register' && (
               <form onSubmit={handleRegister}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
@@ -421,17 +477,16 @@ export default function App() {
 
                 <div style={{ marginBottom: '10px' }}>
                   <label style={fieldLabelStyle}>Password</label>
-                  <input type="password" required placeholder="Crea una password..." value={regPassword} onChange={(e) => setRegPassword(e.target.value)} style={inputStyle} />
+                  <input type="password" required placeholder="Crea password..." value={regPassword} onChange={(e) => setRegPassword(e.target.value)} style={inputStyle} />
                 </div>
 
-                {/* CODICE INVITO OBBLIGATORIO */}
                 <div style={{ marginBottom: '10px' }}>
                   <label style={{ ...fieldLabelStyle, color: '#00d2ff', fontWeight: 'bold' }}>
-                    🔑 Codice Invito (CO26 per Coach, BRAT26 per Atleta)
+                    Codice di invito
                   </label>
                   <input
                     required
-                    placeholder="Inserisci codice..."
+                    placeholder="Inserisci il codice fornito dal club..."
                     value={regInviteCode}
                     onChange={(e) => setRegInviteCode(e.target.value)}
                     style={{ ...inputStyle, border: '1px solid #00d2ff', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold' }}
@@ -458,11 +513,19 @@ export default function App() {
   }
 
   // ==========================================
-  // APPLICAZIONE LOGGATA
+  // APPLICAZIONE PRINCIPALE
   // ==========================================
   const isSuperAdmin = currentUser.role === 'superadmin';
   const isCoach = currentUser.role === 'coach';
+  const isAthlete = currentUser.role === 'athlete';
   const canManageAthletes = isSuperAdmin || isCoach;
+
+  // Filtro video per la libreria
+  const filteredVideos = videos.filter(v => {
+    if (isAthlete) return v.athleteId === currentUser.id;
+    if (videoFilterAthlete === 'Tutti') return true;
+    return v.athleteId === videoFilterAthlete;
+  });
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#090e1a', color: '#fff', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif' }}>
@@ -492,14 +555,12 @@ export default function App() {
               👥 Atleti
             </button>
 
-            {/* Gestione Club: visibile SOLO se Coach o Super Admin */}
-            {(isCoach || isSuperAdmin) && (
+            {!isAthlete && (
               <button onClick={() => setActiveTab('club')} style={navBtnStyle(activeTab === 'club')}>
                 ⚙️ Gestione Club
               </button>
             )}
 
-            {/* Super Admin: visibile SOLO al Super Admin */}
             {isSuperAdmin && (
               <button onClick={() => setActiveTab('admin')} style={navBtnStyle(activeTab === 'admin')}>
                 🛡️ Super Admin
@@ -548,7 +609,7 @@ export default function App() {
               </div>
               <div style={statCardStyle}>
                 <div style={statIconBox('#3a86ff')}>🎞️</div>
-                <div style={{ fontSize: '26px', fontWeight: 'bold', marginTop: '10px' }}>0</div>
+                <div style={{ fontSize: '26px', fontWeight: 'bold', marginTop: '10px' }}>{filteredVideos.length}</div>
                 <div style={{ fontSize: '11px', color: '#6d83a7', letterSpacing: '0.5px' }}>VIDEO</div>
               </div>
               <div style={statCardStyle}>
@@ -593,7 +654,18 @@ export default function App() {
                   <h3 style={{ margin: 0, fontSize: '16px' }}>Ultimi video</h3>
                   <span onClick={() => setActiveTab('video')} style={{ color: '#00d2ff', fontSize: '13px', cursor: 'pointer' }}>Libreria &gt;</span>
                 </div>
-                <p style={{ color: '#5f759c', textAlign: 'center', padding: '30px 0' }}>Nessun video ancora.</p>
+                {filteredVideos.length === 0 ? (
+                  <p style={{ color: '#5f759c', textAlign: 'center', padding: '30px 0' }}>Nessun video ancora.</p>
+                ) : (
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    {filteredVideos.slice(0, 2).map(v => (
+                      <div key={v.id} onClick={() => setSelectedVideoPlayer(v)} style={{ cursor: 'pointer', flex: 1, backgroundColor: '#0f1a30', padding: '8px', borderRadius: '6px' }}>
+                        <div style={{ fontSize: '12px', fontWeight: 'bold' }}>{v.specialty}</div>
+                        <div style={{ fontSize: '11px', color: '#6882a9' }}>{v.athleteName}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -662,58 +734,102 @@ export default function App() {
           </div>
         )}
 
-        {/* 3. LIBRERIA VIDEO */}
+        {/* 3. LIBRERIA VIDEO A GRIGLIA / MINIATURE PICCOLE */}
         {activeTab === 'video' && (
           <div>
-            <h1 style={{ fontSize: '24px', margin: '0 0 4px 0' }}>Libreria Video</h1>
-            <p style={{ margin: '0 0 20px 0', color: '#748cae', fontSize: '14px' }}>Video con slow-motion e telestratore per analisi tecnica.</p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <h1 style={{ fontSize: '24px', margin: '0 0 4px 0' }}>Libreria Video</h1>
+                <p style={{ margin: 0, color: '#748cae', fontSize: '14px' }}>
+                  {isAthlete ? 'I tuoi video di allenamento e gara con analisi tecnica.' : 'Archivio video atleti con video analisi telestrator.'}
+                </p>
+              </div>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={actionBtnCyan}>
-                📁 Carica Video Discesa
-                <input type="file" accept="video/*" onChange={(e) => {
-                  if (e.target.files[0]) setCurrentVideoSrc(URL.createObjectURL(e.target.files[0]));
-                }} style={{ display: 'none' }} />
-              </label>
+              {/* PULSANTE UPLOAD: SOLO PER COACH E SUPER ADMIN */}
+              {!isAthlete && (
+                <label style={actionBtnCyan}>
+                  📹 Carica e Tagga Video
+                  <input type="file" accept="video/*" onChange={handleFileSelect} style={{ display: 'none' }} />
+                </label>
+              )}
             </div>
 
-            {currentVideoSrc && (
-              <div style={{ backgroundColor: '#000', borderRadius: '8px', overflow: 'hidden', position: 'relative', maxWidth: '750px' }}>
-                <video
-                  ref={videoRef}
-                  src={currentVideoSrc}
-                  playsInline
-                  onLoadedMetadata={() => {
-                    if (videoRef.current && canvasRef.current) {
-                      canvasRef.current.width = videoRef.current.clientWidth;
-                      canvasRef.current.height = videoRef.current.clientHeight;
-                    }
-                  }}
-                  style={{ width: '100%', display: 'block' }}
-                />
-                <canvas
-                  ref={canvasRef}
-                  onPointerDown={startDraw}
-                  onPointerMove={draw}
-                  onPointerUp={() => setIsDrawing(false)}
-                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', touchAction: 'none', cursor: 'crosshair', pointerEvents: !isPlaying ? 'auto' : 'none' }}
-                />
-                <div style={{ padding: '10px', backgroundColor: '#0f172a', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <button onClick={() => { if (videoRef.current) { isPlaying ? videoRef.current.pause() : videoRef.current.play(); setIsPlaying(!isPlaying); }}} style={controlBtn}>
-                    {isPlaying ? '⏸' : '▶'}
-                  </button>
-                  <button onClick={() => { if (videoRef.current) videoRef.current.currentTime -= 0.04; }} style={controlBtn}>⏮ Frame</button>
-                  <button onClick={() => { if (videoRef.current) videoRef.current.currentTime += 0.04; }} style={controlBtn}>⏭ Frame</button>
-                  <button onClick={() => { if (videoRef.current) videoRef.current.playbackRate = 0.2; }} style={controlBtn}>0.2×</button>
-                  <button onClick={() => { if (videoRef.current) videoRef.current.playbackRate = 1.0; }} style={controlBtn}>1.0×</button>
-                  <button onClick={() => { if (canvasRef.current) canvasRef.current.getContext('2d').clearRect(0, 0, canvasRef.current.width, canvasRef.current.height); }} style={{ ...controlBtn, marginLeft: 'auto', backgroundColor: '#e63946' }}>Cancella Disegno</button>
-                </div>
+            {/* Filtro Cartelle per Atleta */}
+            {!isAthlete && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                <span style={{ fontSize: '13px', color: '#7e92b3' }}>Filtra per Atleta:</span>
+                <select
+                  value={videoFilterAthlete}
+                  onChange={(e) => setVideoFilterAthlete(e.target.value)}
+                  style={{ ...selectDarkStyle, maxWidth: '240px' }}
+                >
+                  <option value="Tutti">📁 Tutti gli Atleti</option>
+                  {members.filter(m => m.role === 'athlete').map(a => (
+                    <option key={a.id} value={a.id}>{a.name} ({a.group})</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* GRIGLIA MINIATURE VIDEO (ICONE COMPATTE) */}
+            {filteredVideos.length === 0 ? (
+              <div style={{ backgroundColor: '#0e172a', border: '1px dashed #1e2c47', borderRadius: '8px', padding: '40px', textAlign: 'center', color: '#6882a9' }}>
+                Nessun video trovato in questa cartella.
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '14px' }}>
+                {filteredVideos.map(v => (
+                  <div
+                    key={v.id}
+                    style={{
+                      backgroundColor: '#0e172a',
+                      border: '1px solid #1a2742',
+                      borderRadius: '8px',
+                      overflow: 'hidden',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.3)'
+                    }}
+                  >
+                    {/* Anteprima video con play overlay */}
+                    <div
+                      onClick={() => setSelectedVideoPlayer(v)}
+                      style={{ position: 'relative', width: '100%', height: '120px', backgroundColor: '#000', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >
+                      <video src={v.url} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.7 }} preload="metadata" />
+                      <div style={{ position: 'absolute', width: '38px', height: '38px', borderRadius: '50%', backgroundColor: 'rgba(0, 210, 255, 0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#000', fontSize: '16px', fontWeight: 'bold' }}>
+                        ▶
+                      </div>
+                      <span style={{ position: 'absolute', bottom: '6px', right: '6px', fontSize: '10px', backgroundColor: '#000', padding: '2px 5px', borderRadius: '3px', color: '#00d2ff' }}>
+                        {v.specialty}
+                      </span>
+                    </div>
+
+                    {/* Dettagli Cartella Video */}
+                    <div style={{ padding: '10px' }}>
+                      <div style={{ fontWeight: 'bold', fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        👤 {v.athleteName}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#748cae', marginTop: '3px' }}>
+                        📍 {v.location} • {v.slope}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#556c8f', marginTop: '2px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>📅 {v.date}</span>
+                        {!isAthlete && (
+                          <button onClick={(e) => { e.stopPropagation(); deleteVideo(v.id); }} style={{ background: 'none', border: 'none', color: '#ff4d4f', cursor: 'pointer', padding: 0, fontSize: '11px' }}>
+                            🗑️
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
         )}
 
-        {/* 4. ATLETI (SPOSTAMENTO CATEGORIA) */}
+        {/* 4. ATLETI */}
         {activeTab === 'atleti' && (
           <div>
             <h1 style={{ fontSize: '24px', margin: '0 0 4px 0' }}>Atleti</h1>
@@ -731,7 +847,7 @@ export default function App() {
                     </div>
 
                     {groupAthletes.length === 0 ? (
-                      <p style={{ color: '#5f759c', fontSize: '13px', margin: 0 }}>Nessun atleta in questa categoria.</p>
+                      <p style={{ color: '#5f759c', fontSize: '13px', margin: 0 }}>Nessun atleta in questo gruppo.</p>
                     ) : (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '8px' }}>
                         {groupAthletes.map(a => (
@@ -742,7 +858,6 @@ export default function App() {
                             </div>
 
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              {/* SPOSTAMENTO CATEGORIA (COACH E SUPER ADMIN) */}
                               {canManageAthletes && (
                                 <select
                                   value={a.group}
@@ -753,7 +868,6 @@ export default function App() {
                                 </select>
                               )}
 
-                              {/* TASTO ELIMINA (SOLO SUPER ADMIN) */}
                               {isSuperAdmin && (
                                 <button onClick={() => deleteMember(a.id)} style={{ background: 'none', border: 'none', color: '#e63946', cursor: 'pointer', fontSize: '12px' }}>
                                   🗑️
@@ -771,7 +885,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 5. GESTIONE CLUB (VISIBILE SOLO AD ALLENATORI E SUPER ADMIN) */}
+        {/* 5. GESTIONE CLUB */}
         {activeTab === 'club' && canManageAthletes && (
           <div>
             <h1 style={{ fontSize: '24px', margin: '0 0 4px 0' }}>Bardonecchia Ski Academy</h1>
@@ -820,7 +934,6 @@ export default function App() {
                       </span>
                     )}
 
-                    {/* Solo il Super Admin può eliminare gli account */}
                     {isSuperAdmin && m.id !== currentUser.id && (
                       <button onClick={() => deleteMember(m.id)} style={deleteBtnStyle}>
                         🗑️ Elimina
@@ -833,12 +946,46 @@ export default function App() {
           </div>
         )}
 
-        {/* 6. SUPER ADMIN (RISERVATO ESCLUSIVAMENTE AL SUPER ADMIN) */}
+        {/* 6. SUPER ADMIN: RECUPERO PASSWORD E CREDENZIALI */}
         {activeTab === 'admin' && isSuperAdmin && (
           <div>
             <h1 style={{ fontSize: '24px', margin: '0 0 4px 0' }}>Pannello Super Admin</h1>
-            <p style={{ margin: '0 0 20px 0', color: '#748cae', fontSize: '14px' }}>Gestione riservata delle tue credenziali personali.</p>
+            <p style={{ margin: '0 0 20px 0', color: '#748cae', fontSize: '14px' }}>Recupero credenziali utenti e gestione del club.</p>
 
+            {/* TABELLA RECUPERO PASSWORD UTENTI */}
+            <div style={{ backgroundColor: '#0e172a', border: '1px solid #1b2844', borderRadius: '8px', padding: '18px', marginBottom: '24px' }}>
+              <h3 style={{ marginTop: 0, fontSize: '16px', color: '#00d2ff' }}>🔑 Registro Utenti & Recupero Password</h3>
+              <p style={{ fontSize: '13px', color: '#748cae', marginBottom: '14px' }}>
+                Se un atleta o allenatore dimentica la password, puoi leggerla qui sotto e comunicargliela:
+              </p>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #1a2742', color: '#6882a9' }}>
+                      <th style={{ padding: '8px' }}>Nome</th>
+                      <th style={{ padding: '8px' }}>Email (Login)</th>
+                      <th style={{ padding: '8px' }}>Password</th>
+                      <th style={{ padding: '8px' }}>Ruolo</th>
+                      <th style={{ padding: '8px' }}>Gruppo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {members.map(m => (
+                      <tr key={m.id} style={{ borderBottom: '1px solid #131e36' }}>
+                        <td style={{ padding: '8px', fontWeight: 'bold' }}>{m.name}</td>
+                        <td style={{ padding: '8px', color: '#00d2ff' }}>{m.email}</td>
+                        <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 'bold', color: '#06d6a0' }}>{m.password}</td>
+                        <td style={{ padding: '8px', textTransform: 'capitalize' }}>{m.role}</td>
+                        <td style={{ padding: '8px' }}>{m.group}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Modifica Credenziali Super Admin */}
             <div style={{ backgroundColor: '#0e172a', border: '1px solid #1b2844', borderRadius: '8px', padding: '18px', maxWidth: '420px' }}>
               <h3 style={{ marginTop: 0, fontSize: '16px' }}>🛡️ Modifica Tue Credenziali</h3>
               <form onSubmit={handleUpdateAdminCredentials}>
@@ -857,6 +1004,137 @@ export default function App() {
         )}
 
       </main>
+
+      {/* MODALE DI TAGGING / CARTELLA VIDEO ALL'UPLOAD */}
+      {showUploadModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ backgroundColor: '#0e172a', border: '1px solid #1b2844', padding: '24px', borderRadius: '8px', width: '380px' }}>
+            <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', color: '#00d2ff' }}>📁 Scheda Indicizzazione Video</h3>
+            <form onSubmit={handleSaveVideo}>
+              <div style={{ marginBottom: '12px' }}>
+                <label style={fieldLabelStyle}>Specialità:</label>
+                <select value={videoSpecialty} onChange={(e) => setVideoSpecialty(e.target.value)} style={selectDarkStyle}>
+                  <option value="Slalom Gigante">Slalom Gigante (GS)</option>
+                  <option value="Slalom Speciale">Slalom Speciale (SL)</option>
+                  <option value="Super-G">Super-G (SG)</option>
+                  <option value="Discesa Libera">Discesa Libera (DH)</option>
+                  <option value="Campo Libero">Campo Libero</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '12px' }}>
+                <label style={fieldLabelStyle}>Tagga Atleta:</label>
+                <select required value={videoTaggedAthleteId} onChange={(e) => setVideoTaggedAthleteId(e.target.value)} style={selectDarkStyle}>
+                  <option value="">-- Seleziona Atleta --</option>
+                  {members.filter(m => m.role === 'athlete').map(a => (
+                    <option key={a.id} value={a.id}>{a.name} ({a.group})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '12px' }}>
+                <div>
+                  <label style={fieldLabelStyle}>Luogo:</label>
+                  <input value={videoLocation} onChange={(e) => setVideoLocation(e.target.value)} placeholder="Bardonecchia" style={inputStyle} />
+                </div>
+                <div>
+                  <label style={fieldLabelStyle}>Pista:</label>
+                  <input value={videoSlope} onChange={(e) => setVideoSlope(e.target.value)} placeholder="es. 23 Olimpica" style={inputStyle} />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '18px' }}>
+                <label style={fieldLabelStyle}>Data discesa:</label>
+                <input type="date" value={videoDate} onChange={(e) => setVideoDate(e.target.value)} style={inputStyle} required />
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button type="submit" style={{ ...actionBtnCyan, flex: 1 }}>Salva in Cartella</button>
+                <button type="button" onClick={() => { setShowUploadModal(false); setTempVideoFile(null); }} style={{ ...controlBtn, flex: 1 }}>Annulla</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* POPUP PLAYER VIDEO TELESTRATOR / FRAME-BY-FRAME */}
+      {selectedVideoPlayer && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ backgroundColor: '#090e1a', border: '1px solid #1a2742', borderRadius: '8px', padding: '16px', maxWidth: '780px', width: '92%' }}>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <div>
+                <span style={{ fontWeight: 'bold', fontSize: '15px' }}>{selectedVideoPlayer.specialty} • {selectedVideoPlayer.athleteName}</span>
+                <span style={{ fontSize: '12px', color: '#748cae', marginLeft: '10px' }}>({selectedVideoPlayer.location} - {selectedVideoPlayer.slope})</span>
+              </div>
+              <button onClick={() => setSelectedVideoPlayer(null)} style={{ background: 'none', border: 'none', color: '#ff4d4f', fontSize: '18px', cursor: 'pointer' }}>✖</button>
+            </div>
+
+            {/* Contenitore Video + Canvas di Disegno Proporzionato */}
+            <div style={{ position: 'relative', width: '100%', maxHeight: '480px', backgroundColor: '#000', borderRadius: '6px', overflow: 'hidden' }}>
+              <video
+                ref={videoRef}
+                src={selectedVideoPlayer.url}
+                playsInline
+                style={{ width: '100%', maxHeight: '480px', display: 'block', margin: '0 auto' }}
+                onLoadedMetadata={() => {
+                  if (videoRef.current && canvasRef.current) {
+                    canvasRef.current.width = videoRef.current.clientWidth;
+                    canvasRef.current.height = videoRef.current.clientHeight;
+                  }
+                }}
+              />
+              <canvas
+                ref={canvasRef}
+                onPointerDown={startDraw}
+                onPointerMove={draw}
+                onPointerUp={() => setIsDrawing(false)}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  touchAction: 'none',
+                  cursor: (!isPlaying && !isAthlete) ? 'crosshair' : 'default',
+                  pointerEvents: (!isPlaying && !isAthlete) ? 'auto' : 'none'
+                }}
+              />
+            </div>
+
+            {/* Controlli Player */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '12px', alignItems: 'center' }}>
+              <button onClick={() => { if (videoRef.current) { isPlaying ? videoRef.current.pause() : videoRef.current.play(); setIsPlaying(!isPlaying); }}} style={controlBtn}>
+                {isPlaying ? '⏸ Pausa' : '▶ Play'}
+              </button>
+              <button onClick={() => { if (videoRef.current) { videoRef.current.pause(); setIsPlaying(false); videoRef.current.currentTime -= 0.04; }}} style={controlBtn}>⏮ -1 Frame</button>
+              <button onClick={() => { if (videoRef.current) { videoRef.current.pause(); setIsPlaying(false); videoRef.current.currentTime += 0.04; }}} style={controlBtn}>⏭ +1 Frame</button>
+              
+              <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto' }}>
+                {[0.2, 0.5, 1.0].map(rate => (
+                  <button key={rate} onClick={() => { if (videoRef.current) videoRef.current.playbackRate = rate; }} style={controlBtn}>
+                    {rate}×
+                  </button>
+                ))}
+              </div>
+
+              {!isAthlete && (
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', width: '100%', marginTop: '6px', borderTop: '1px solid #162238', paddingTop: '8px' }}>
+                  <label style={{ fontSize: '11px', color: '#748cae' }}>Colore matita:</label>
+                  <input type="color" value={drawColor} onChange={(e) => setDrawColor(e.target.value)} style={{ background: 'none', border: 'none', width: '28px', height: '24px', cursor: 'pointer' }} />
+                  <button onClick={() => { if (canvasRef.current) canvasRef.current.getContext('2d').clearRect(0, 0, canvasRef.current.width, canvasRef.current.height); }} style={{ ...controlBtn, backgroundColor: '#2d1518', color: '#ff4d4f', border: '1px solid #5a1c24' }}>
+                    Cancella Tratti
+                  </button>
+                  <span style={{ fontSize: '11px', color: '#6882a9', marginLeft: 'auto' }}>
+                    Metti in pausa per analizzare la discesa
+                  </span>
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {/* MODAL NUOVA ATTIVITÀ */}
       {showNewActivityModal && (
