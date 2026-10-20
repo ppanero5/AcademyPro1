@@ -5,7 +5,7 @@ export default function App() {
 
   // --- STATO AUTENTICAZIONE ---
   const [currentUser, setCurrentUser] = useState(null);
-  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
+  const [authTab, setAuthTab] = useState('login'); // 'login' | 'register'
   const [activeTab, setActiveTab] = useState('dashboard');
   const [filterType, setFilterType] = useState('Tutte');
 
@@ -13,43 +13,42 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [authError, setAuthError] = useState('');
+  const [authSuccess, setAuthSuccess] = useState('');
 
   // Campi Form Registrazione
   const [regName, setRegName] = useState('');
+  const [regSurname, setRegSurname] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regInviteCode, setRegInviteCode] = useState('');
   const [regGroup, setRegGroup] = useState('Allievi');
 
-  // --- CODICI INVITO PREDEFINITI RICHIESTI ---
+  // Codici di invito ufficiali richiesti
   const defaultCodes = {
     coach: 'CO26',
     athlete: 'BRAT26'
   };
   const [inviteCodes, setInviteCodes] = useState(defaultCodes);
 
-  // --- GRUPPI CATEGORIE ---
+  // Elenco Categorie
   const categoriesList = ['Superbaby', 'Baby', 'Cuccioli', 'Ragazzi', 'Allievi', 'Giovani', 'Master'];
 
-  const [groups, setGroups] = useState([
-    { id: 'superbaby', name: 'Superbaby', coaches: [] },
-    { id: 'baby', name: 'Baby', coaches: [] },
-    { id: 'cuccioli', name: 'Cuccioli', coaches: [] },
-    { id: 'ragazzi', name: 'Ragazzi', coaches: [] },
-    { id: 'allievi', name: 'Allievi', coaches: ['Pietro Panero'] },
-    { id: 'giovani', name: 'Giovani', coaches: [] },
-    { id: 'master', name: 'Master', coaches: [] },
-  ]);
-
-  // Membri di default
+  // Super Admin di base per primo accesso
   const defaultMembers = [
-    { id: '1', name: 'Super Admin', email: 'superadmin@skirank.it', password: 'admin', role: 'superadmin', group: 'Tutti', club: 'Bardonecchia Ski Academy' },
-    { id: '2', name: 'Pietro Panero', email: 'pietro@panero.biz', password: 'coach', role: 'coach', group: 'Allievi', club: 'Bardonecchia Ski Academy' }
+    {
+      id: '1',
+      name: 'Super Admin',
+      email: 'superadmin@skirank.it',
+      password: 'admin',
+      role: 'superadmin',
+      group: 'Tutti',
+      club: 'Bardonecchia Ski Academy'
+    }
   ];
 
   const [members, setMembers] = useState([]);
 
-  // Attività
+  // Attività di programma
   const defaultActivities = [
     {
       id: 1,
@@ -58,8 +57,8 @@ export default function App() {
       date: '2026-10-22',
       time: '08:30 - 12:00',
       targetGroup: 'Allievi',
-      confirmedCount: 1,
-      totalCount: 1
+      confirmedCount: 0,
+      totalCount: 0
     }
   ];
   const [activities, setActivities] = useState([]);
@@ -72,8 +71,6 @@ export default function App() {
   // Modifica Admin
   const [editAdminEmail, setEditAdminEmail] = useState('');
   const [editAdminPassword, setEditAdminPassword] = useState('');
-  const [newCoachCode, setNewCoachCode] = useState('');
-  const [newAthleteCode, setNewAthleteCode] = useState('');
 
   // Video Analyzer
   const videoRef = useRef(null);
@@ -105,6 +102,7 @@ export default function App() {
 
       const savedActs = localStorage.getItem('academy_acts');
       if (savedActs) setActivities(JSON.parse(savedActs));
+      else setActivities(defaultActivities);
     } catch (e) {}
   }, []);
 
@@ -118,19 +116,17 @@ export default function App() {
     try { localStorage.setItem('academy_acts', JSON.stringify(acts)); } catch (e) {}
   };
 
-  const persistCodes = (codes) => {
-    setInviteCodes(codes);
-    try { localStorage.setItem('academy_codes', JSON.stringify(codes)); } catch (e) {}
-  };
-
   // --- LOGIN ---
   const handleLogin = (e) => {
     e.preventDefault();
     setAuthError('');
+    setAuthSuccess('');
 
-    const user = members.find(m => m.email.toLowerCase() === loginEmail.toLowerCase().trim());
+    const cleanEmail = loginEmail.toLowerCase().trim();
+    const user = members.find(m => m.email.toLowerCase() === cleanEmail);
+
     if (!user) {
-      setAuthError('Nessun account trovato con questa email.');
+      setAuthError('Nessun account registrato con questa email. Registrati prima!');
       return;
     }
 
@@ -144,37 +140,40 @@ export default function App() {
     setLoginPassword('');
   };
 
-  // --- REGISTRAZIONE CON CODICI BRAT26 E CO26 ---
+  // --- REGISTRAZIONE ---
   const handleRegister = (e) => {
     e.preventDefault();
     setAuthError('');
+    setAuthSuccess('');
 
-    if (!regName.trim() || !regEmail.trim() || !regPassword.trim() || !regInviteCode.trim()) {
-      setAuthError('Compila tutti i campi.');
+    if (!regName.trim() || !regSurname.trim() || !regEmail.trim() || !regPassword.trim() || !regInviteCode.trim()) {
+      setAuthError('Compila tutti i campi richiesti.');
       return;
     }
 
-    if (members.some(m => m.email.toLowerCase() === regEmail.toLowerCase().trim())) {
-      setAuthError('Esiste già un account con questa email.');
+    const cleanEmail = regEmail.toLowerCase().trim();
+    if (members.some(m => m.email.toLowerCase() === cleanEmail)) {
+      setAuthError('Questa email è già registrata. Effettua l\'accesso.');
       return;
     }
 
-    let assignedRole = '';
+    // Verifica codici
     const cleanCode = regInviteCode.trim().toUpperCase();
+    let assignedRole = '';
 
     if (cleanCode === inviteCodes.coach.toUpperCase()) {
       assignedRole = 'coach';
     } else if (cleanCode === inviteCodes.athlete.toUpperCase()) {
       assignedRole = 'athlete';
     } else {
-      setAuthError('Codice invito non valido! Usa BRAT26 per atleta o CO26 per allenatore.');
+      setAuthError('Codice invito non valido! Inserisci BRAT26 (Atleta) o CO26 (Allenatore).');
       return;
     }
 
     const newUser = {
       id: Date.now().toString(),
-      name: regName.trim(),
-      email: regEmail.trim(),
+      name: `${regName.trim()} ${regSurname.trim()}`,
+      email: cleanEmail,
       password: regPassword,
       role: assignedRole,
       group: assignedRole === 'coach' ? 'Tutti' : regGroup,
@@ -183,9 +182,16 @@ export default function App() {
 
     const updated = [...members, newUser];
     persistMembers(updated);
-    setCurrentUser(newUser);
-    try { localStorage.setItem('academy_user', JSON.stringify(newUser)); } catch (e) {}
-    alert(`Registrazione completata! Benvenuto nel club.`);
+
+    // Reset campi e reindirizzamento al login
+    setRegName('');
+    setRegSurname('');
+    setRegEmail('');
+    setRegPassword('');
+    setRegInviteCode('');
+    setLoginEmail(cleanEmail);
+    setAuthSuccess('Registrazione avvenuta con successo! Inserisci la password per accedere.');
+    setAuthTab('login');
   };
 
   const logout = () => {
@@ -193,25 +199,21 @@ export default function App() {
     try { localStorage.removeItem('academy_user'); } catch (e) {}
   };
 
-  // --- SPOSTAMENTO ATLETA TRA LE CATEGORIE (ALLENATORI E SUPER ADMIN) ---
-  const handleMoveCategory = (athleteId, newCategory) => {
-    const updated = members.map(m => {
-      if (m.id === athleteId) {
-        return { ...m, group: newCategory };
-      }
-      return m;
-    });
+  // Spostamento Categoria
+  const handleMoveCategory = (athleteId, newCat) => {
+    const updated = members.map(m => (m.id === athleteId ? { ...m, group: newCat } : m));
     persistMembers(updated);
   };
 
-  // --- ELIMINAZIONE ACCOUNT (SOLO SUPER ADMIN) ---
+  // Eliminazione Membro
   const deleteMember = (id) => {
-    if (confirm('Sei sicuro di voler eliminare definitivamente questo account?')) {
+    if (confirm('Sei sicuro di voler eliminare definitivamente questo utente?')) {
       const updated = members.filter(m => m.id !== id);
       persistMembers(updated);
     }
   };
 
+  // Eliminazione Attività
   const deleteActivity = (id) => {
     if (confirm('Vuoi eliminare questa attività?')) {
       const updated = activities.filter(a => a.id !== id);
@@ -258,17 +260,7 @@ export default function App() {
     alert('Credenziali Super Admin aggiornate!');
   };
 
-  const handleUpdateCodes = (e) => {
-    e.preventDefault();
-    const newCodes = {
-      coach: newCoachCode.trim().toUpperCase() || inviteCodes.coach,
-      athlete: newAthleteCode.trim().toUpperCase() || inviteCodes.athlete
-    };
-    persistCodes(newCodes);
-    alert('Codici invito aggiornati!');
-  };
-
-  // Canvas Video Player
+  // Video Canvas Drawing
   const getCoords = (e) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
@@ -303,10 +295,13 @@ export default function App() {
 
   if (!mounted) return null;
 
-  // --- SCHERMATA LOGIN & REGISTRAZIONE ---
+  // ==========================================
+  // SCHERMATA INIZIALE: ACCEDI O REGISTRATI
+  // ==========================================
   if (!currentUser) {
     return (
       <div style={loginContainerStyle}>
+        {/* Banner Grafico */}
         <div style={loginHeroStyle}>
           <div style={{ position: 'absolute', bottom: '40px', left: '40px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
@@ -319,115 +314,152 @@ export default function App() {
           </div>
         </div>
 
+        {/* Riquadro Form */}
         <div style={loginFormStyle}>
           <div style={{ width: '100%', maxWidth: '380px' }}>
+            
+            {/* Tasti di Scelta Scheda: Accedi o Registrati */}
+            <div style={{ display: 'flex', borderBottom: '2px solid #1a2742', marginBottom: '24px' }}>
+              <button
+                type="button"
+                onClick={() => { setAuthTab('login'); setAuthError(''); setAuthSuccess(''); }}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  background: 'none',
+                  border: 'none',
+                  borderBottom: authTab === 'login' ? '3px solid #00d2ff' : '3px solid transparent',
+                  color: authTab === 'login' ? '#00d2ff' : '#6d83a7',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                Accedi
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAuthTab('register'); setAuthError(''); setAuthSuccess(''); }}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  background: 'none',
+                  border: 'none',
+                  borderBottom: authTab === 'register' ? '3px solid #00d2ff' : '3px solid transparent',
+                  color: authTab === 'register' ? '#00d2ff' : '#6d83a7',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                Registrati
+              </button>
+            </div>
+
             {authError && (
               <div style={{ backgroundColor: '#2d1518', border: '1px solid #742a2a', color: '#ff6b6b', padding: '10px', borderRadius: '6px', fontSize: '13px', marginBottom: '16px' }}>
                 {authError}
               </div>
             )}
 
-            {authMode === 'login' ? (
-              <div>
-                <h2 style={{ fontSize: '26px', margin: '0 0 6px 0', fontWeight: 'bold' }}>Accedi</h2>
-                <p style={{ color: '#8b9bb4', fontSize: '14px', margin: '0 0 20px 0' }}>Inserisci le tue credenziali per entrare nel club.</p>
-
-                <form onSubmit={handleLogin}>
-                  <div style={{ marginBottom: '14px' }}>
-                    <label style={fieldLabelStyle}>Email</label>
-                    <input
-                      type="email"
-                      required
-                      placeholder="nome@skiclub.it"
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      style={inputStyle}
-                    />
-                  </div>
-                  <div style={{ marginBottom: '20px' }}>
-                    <label style={fieldLabelStyle}>Password</label>
-                    <input
-                      type="password"
-                      required
-                      placeholder="••••••••••••"
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      style={inputStyle}
-                    />
-                  </div>
-
-                  <button type="submit" style={primarySubmitBtn}>Accedi</button>
-                </form>
-
-                <div style={{ marginTop: '20px', textAlign: 'center', fontSize: '13px', color: '#889ebf' }}>
-                  Non hai un account?{' '}
-                  <span onClick={() => { setAuthMode('register'); setAuthError(''); }} style={{ color: '#00d2ff', cursor: 'pointer', fontWeight: 'bold' }}>
-                    Registrati con codice invito
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div>
-                <h2 style={{ fontSize: '26px', margin: '0 0 6px 0', fontWeight: 'bold' }}>Registrati</h2>
-                <p style={{ color: '#8b9bb4', fontSize: '14px', margin: '0 0 16px 0' }}>Unisciti a Bardonecchia Ski Academy.</p>
-
-                <form onSubmit={handleRegister}>
-                  <div style={{ marginBottom: '10px' }}>
-                    <label style={fieldLabelStyle}>Nome e Cognome</label>
-                    <input required placeholder="es. Mario Rossi" value={regName} onChange={(e) => setRegName(e.target.value)} style={inputStyle} />
-                  </div>
-
-                  <div style={{ marginBottom: '10px' }}>
-                    <label style={fieldLabelStyle}>Email</label>
-                    <input type="email" required placeholder="mario@email.it" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} style={inputStyle} />
-                  </div>
-
-                  <div style={{ marginBottom: '10px' }}>
-                    <label style={fieldLabelStyle}>Password</label>
-                    <input type="password" required placeholder="Crea una password..." value={regPassword} onChange={(e) => setRegPassword(e.target.value)} style={inputStyle} />
-                  </div>
-
-                  <div style={{ marginBottom: '10px' }}>
-                    <label style={{ ...fieldLabelStyle, color: '#00d2ff', fontWeight: 'bold' }}>
-                      🔑 Codice Invito Club (es. BRAT26 o CO26)
-                    </label>
-                    <input
-                      required
-                      placeholder="BRAT26 / CO26"
-                      value={regInviteCode}
-                      onChange={(e) => setRegInviteCode(e.target.value)}
-                      style={{ ...inputStyle, border: '1px solid #00d2ff', letterSpacing: '1px', textTransform: 'uppercase' }}
-                    />
-                  </div>
-
-                  <div style={{ marginBottom: '16px' }}>
-                    <label style={fieldLabelStyle}>Categoria / Gruppo di appartenenza</label>
-                    <select value={regGroup} onChange={(e) => setRegGroup(e.target.value)} style={selectDarkStyle}>
-                      {categoriesList.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                    <small style={{ fontSize: '11px', color: '#6d83a7', marginTop: '3px', display: 'block' }}>
-                      (Se sei un allenatore con codice CO26 gestirai tutti i gruppi)
-                    </small>
-                  </div>
-
-                  <button type="submit" style={primarySubmitBtn}>Crea Account</button>
-                </form>
-
-                <div style={{ marginTop: '16px', textAlign: 'center', fontSize: '13px', color: '#889ebf' }}>
-                  Hai già un account?{' '}
-                  <span onClick={() => { setAuthMode('login'); setAuthError(''); }} style={{ color: '#00d2ff', cursor: 'pointer', fontWeight: 'bold' }}>
-                    Accedi qui
-                  </span>
-                </div>
+            {authSuccess && (
+              <div style={{ backgroundColor: '#132e27', border: '1px solid #1e5c4a', color: '#06d6a0', padding: '10px', borderRadius: '6px', fontSize: '13px', marginBottom: '16px' }}>
+                {authSuccess}
               </div>
             )}
+
+            {/* SEZIONE 1: ACCEDI */}
+            {authTab === 'login' && (
+              <form onSubmit={handleLogin}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={fieldLabelStyle}>Email</label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="tua@email.it"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    style={inputStyle}
+                  />
+                </div>
+                <div style={{ marginBottom: '22px' }}>
+                  <label style={fieldLabelStyle}>Password</label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="••••••••••••"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    style={inputStyle}
+                  />
+                </div>
+
+                <button type="submit" style={primarySubmitBtn}>
+                  Accedi al Club
+                </button>
+              </form>
+            )}
+
+            {/* SEZIONE 2: REGISTRATI */}
+            {authTab === 'register' && (
+              <form onSubmit={handleRegister}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
+                  <div>
+                    <label style={fieldLabelStyle}>Nome</label>
+                    <input required placeholder="Mario" value={regName} onChange={(e) => setRegName(e.target.value)} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={fieldLabelStyle}>Cognome</label>
+                    <input required placeholder="Rossi" value={regSurname} onChange={(e) => setRegSurname(e.target.value)} style={inputStyle} />
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: '10px' }}>
+                  <label style={fieldLabelStyle}>Email</label>
+                  <input type="email" required placeholder="mario.rossi@email.it" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} style={inputStyle} />
+                </div>
+
+                <div style={{ marginBottom: '10px' }}>
+                  <label style={fieldLabelStyle}>Password</label>
+                  <input type="password" required placeholder="Crea una password..." value={regPassword} onChange={(e) => setRegPassword(e.target.value)} style={inputStyle} />
+                </div>
+
+                {/* CODICE INVITO OBBLIGATORIO */}
+                <div style={{ marginBottom: '10px' }}>
+                  <label style={{ ...fieldLabelStyle, color: '#00d2ff', fontWeight: 'bold' }}>
+                    🔑 Codice Invito (CO26 per Coach, BRAT26 per Atleta)
+                  </label>
+                  <input
+                    required
+                    placeholder="Inserisci codice..."
+                    value={regInviteCode}
+                    onChange={(e) => setRegInviteCode(e.target.value)}
+                    style={{ ...inputStyle, border: '1px solid #00d2ff', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold' }}
+                  />
+                </div>
+
+                <div style={{ marginBottom: '18px' }}>
+                  <label style={fieldLabelStyle}>Categoria di appartenenza (per Atleti)</label>
+                  <select value={regGroup} onChange={(e) => setRegGroup(e.target.value)} style={selectDarkStyle}>
+                    {categoriesList.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+
+                <button type="submit" style={primarySubmitBtn}>
+                  Completa Registrazione
+                </button>
+              </form>
+            )}
+
           </div>
         </div>
       </div>
     );
   }
 
-  // --- APP PRINCIPALE ---
+  // ==========================================
+  // APPLICAZIONE LOGGATA
+  // ==========================================
   const isSuperAdmin = currentUser.role === 'superadmin';
   const isCoach = currentUser.role === 'coach';
   const canManageAthletes = isSuperAdmin || isCoach;
@@ -435,7 +467,7 @@ export default function App() {
   return (
     <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#090e1a', color: '#fff', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif' }}>
       
-      {/* SIDEBAR LATERALE */}
+      {/* SIDEBAR */}
       <aside style={sidebarStyle}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '28px' }}>
@@ -460,14 +492,14 @@ export default function App() {
               👥 Atleti
             </button>
 
-            {/* GESTIONE CLUB: VISIBILE SOLO AD ALLENATORI E SUPER ADMIN (NON AGLI ATLETI) */}
+            {/* Gestione Club: visibile SOLO se Coach o Super Admin */}
             {(isCoach || isSuperAdmin) && (
               <button onClick={() => setActiveTab('club')} style={navBtnStyle(activeTab === 'club')}>
                 ⚙️ Gestione Club
               </button>
             )}
 
-            {/* SUPER ADMIN: VISIBILE SOLO AL SUPER ADMIN */}
+            {/* Super Admin: visibile SOLO al Super Admin */}
             {isSuperAdmin && (
               <button onClick={() => setActiveTab('admin')} style={navBtnStyle(activeTab === 'admin')}>
                 🛡️ Super Admin
@@ -492,7 +524,7 @@ export default function App() {
         </div>
       </aside>
 
-      {/* CONTENUTO PRINCIPALE */}
+      {/* CONTENUTO CENTRALE */}
       <main style={{ flex: 1, padding: '24px 32px', overflowY: 'auto' }}>
         
         {/* 1. DASHBOARD */}
@@ -681,7 +713,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 4. ATLETI (CON SPOSTAMENTO CATEGORIE PER COACH E ADMIN) */}
+        {/* 4. ATLETI (SPOSTAMENTO CATEGORIA) */}
         {activeTab === 'atleti' && (
           <div>
             <h1 style={{ fontSize: '24px', margin: '0 0 4px 0' }}>Atleti</h1>
@@ -699,7 +731,7 @@ export default function App() {
                     </div>
 
                     {groupAthletes.length === 0 ? (
-                      <p style={{ color: '#5f759c', fontSize: '13px', margin: 0 }}>Nessun atleta in questo gruppo.</p>
+                      <p style={{ color: '#5f759c', fontSize: '13px', margin: 0 }}>Nessun atleta in questa categoria.</p>
                     ) : (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '8px' }}>
                         {groupAthletes.map(a => (
@@ -710,7 +742,7 @@ export default function App() {
                             </div>
 
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              {/* MENU SPOSTAMENTO CATEGORIA (COACH E SUPER ADMIN) */}
+                              {/* SPOSTAMENTO CATEGORIA (COACH E SUPER ADMIN) */}
                               {canManageAthletes && (
                                 <select
                                   value={a.group}
@@ -748,15 +780,15 @@ export default function App() {
             <div style={{ backgroundColor: '#0e172a', border: '1px solid #1b2844', borderRadius: '8px', padding: '16px', marginBottom: '24px' }}>
               <div style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '6px' }}>Codici Invito Attuali</div>
               <p style={{ color: '#6d83a7', fontSize: '13px', marginTop: 0, marginBottom: '12px' }}>
-                Condividi questi codici per far registrare gli utenti:
+                Condividi questi codici per far registrare i membri:
               </p>
               <div style={{ display: 'flex', gap: '24px' }}>
                 <div>
-                  <span style={{ fontSize: '11px', color: '#748cae', display: 'block' }}>ALLENATORI</span>
+                  <span style={{ fontSize: '11px', color: '#748cae', display: 'block' }}>CODICE ALLENATORI</span>
                   <code style={codeBoxStyle}>{inviteCodes.coach}</code>
                 </div>
                 <div>
-                  <span style={{ fontSize: '11px', color: '#748cae', display: 'block' }}>ATLETI</span>
+                  <span style={{ fontSize: '11px', color: '#748cae', display: 'block' }}>CODICE ATLETI</span>
                   <code style={codeBoxStyle}>{inviteCodes.athlete}</code>
                 </div>
               </div>
@@ -788,7 +820,7 @@ export default function App() {
                       </span>
                     )}
 
-                    {/* L'ELIMINAZIONE È RISERVATA ESCLUSIVAMENTE AL SUPER ADMIN */}
+                    {/* Solo il Super Admin può eliminare gli account */}
                     {isSuperAdmin && m.id !== currentUser.id && (
                       <button onClick={() => deleteMember(m.id)} style={deleteBtnStyle}>
                         🗑️ Elimina
@@ -801,42 +833,25 @@ export default function App() {
           </div>
         )}
 
-        {/* 6. SUPER ADMIN (SOLO SUPER ADMIN) */}
+        {/* 6. SUPER ADMIN (RISERVATO ESCLUSIVAMENTE AL SUPER ADMIN) */}
         {activeTab === 'admin' && isSuperAdmin && (
           <div>
             <h1 style={{ fontSize: '24px', margin: '0 0 4px 0' }}>Pannello Super Admin</h1>
-            <p style={{ margin: '0 0 20px 0', color: '#748cae', fontSize: '14px' }}>Gestione riservata delle credenziali e dei codici di sicurezza.</p>
+            <p style={{ margin: '0 0 20px 0', color: '#748cae', fontSize: '14px' }}>Gestione riservata delle tue credenziali personali.</p>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
-              <div style={{ backgroundColor: '#0e172a', border: '1px solid #1b2844', borderRadius: '8px', padding: '18px' }}>
-                <h3 style={{ marginTop: 0, fontSize: '16px' }}>🔑 Modifica Codici Invito Club</h3>
-                <form onSubmit={handleUpdateCodes}>
-                  <div style={{ marginBottom: '12px' }}>
-                    <label style={fieldLabelStyle}>Codice Allenatori:</label>
-                    <input placeholder={inviteCodes.coach} value={newCoachCode} onChange={(e) => setNewCoachCode(e.target.value)} style={inputStyle} />
-                  </div>
-                  <div style={{ marginBottom: '16px' }}>
-                    <label style={fieldLabelStyle}>Codice Atleti:</label>
-                    <input placeholder={inviteCodes.athlete} value={newAthleteCode} onChange={(e) => setNewAthleteCode(e.target.value)} style={inputStyle} />
-                  </div>
-                  <button type="submit" style={actionBtnCyan}>Salva Codici</button>
-                </form>
-              </div>
-
-              <div style={{ backgroundColor: '#0e172a', border: '1px solid #1b2844', borderRadius: '8px', padding: '18px' }}>
-                <h3 style={{ marginTop: 0, fontSize: '16px' }}>🛡️ Modifica Tue Credenziali</h3>
-                <form onSubmit={handleUpdateAdminCredentials}>
-                  <div style={{ marginBottom: '12px' }}>
-                    <label style={fieldLabelStyle}>Nuova Email:</label>
-                    <input type="email" placeholder={currentUser.email} value={editAdminEmail} onChange={(e) => setEditAdminEmail(e.target.value)} style={inputStyle} />
-                  </div>
-                  <div style={{ marginBottom: '16px' }}>
-                    <label style={fieldLabelStyle}>Nuova Password:</label>
-                    <input type="password" placeholder="Nuova password..." value={editAdminPassword} onChange={(e) => setEditAdminPassword(e.target.value)} style={inputStyle} />
-                  </div>
-                  <button type="submit" style={actionBtnCyan}>Aggiorna Credenziali</button>
-                </form>
-              </div>
+            <div style={{ backgroundColor: '#0e172a', border: '1px solid #1b2844', borderRadius: '8px', padding: '18px', maxWidth: '420px' }}>
+              <h3 style={{ marginTop: 0, fontSize: '16px' }}>🛡️ Modifica Tue Credenziali</h3>
+              <form onSubmit={handleUpdateAdminCredentials}>
+                <div style={{ marginBottom: '12px' }}>
+                  <label style={fieldLabelStyle}>Nuova Email:</label>
+                  <input type="email" placeholder={currentUser.email} value={editAdminEmail} onChange={(e) => setEditAdminEmail(e.target.value)} style={inputStyle} />
+                </div>
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={fieldLabelStyle}>Nuova Password:</label>
+                  <input type="password" placeholder="Nuova password..." value={editAdminPassword} onChange={(e) => setEditAdminPassword(e.target.value)} style={inputStyle} />
+                </div>
+                <button type="submit" style={actionBtnCyan}>Aggiorna Credenziali</button>
+              </form>
             </div>
           </div>
         )}
