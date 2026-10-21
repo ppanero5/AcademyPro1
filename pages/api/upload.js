@@ -1,5 +1,4 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const s3 = new S3Client({
   region: 'auto',
@@ -10,29 +9,42 @@ const s3 = new S3Client({
   },
 });
 
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '100mb', // Supporta file fino a 100MB
+    },
+  },
+};
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    const { filename, contentType } = req.body;
+    const { filename, fileData, contentType } = req.body;
+    if (!fileData) {
+      return res.status(400).json({ error: 'Dati file mancanti' });
+    }
+
     const cleanFilename = `${Date.now()}-${filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+    const base64Data = fileData.split(';base64,').pop();
+    const buffer = Buffer.from(base64Data, 'base64');
 
-    // Creiamo il comando di caricamento
-    const command = new PutObjectCommand({
-      Bucket: 'academy-videos',
-      Key: cleanFilename,
-      ContentType: contentType || 'video/mp4',
-    });
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: 'academy-videos',
+        Key: cleanFilename,
+        Body: buffer,
+        ContentType: contentType || 'video/mp4',
+      })
+    );
 
-    // Genera un link temporaneo autorizzato valido 15 minuti
-    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 900 });
     const publicUrl = `${process.env.NEXT_PUBLIC_CLOUDFLARE_PUBLIC_URL}/${cleanFilename}`;
-
-    return res.status(200).json({ uploadUrl, publicUrl });
+    return res.status(200).json({ publicUrl });
   } catch (err) {
-    console.error('Presigned URL error:', err);
-    return res.status(500).json({ error: 'Errore generazione link di upload' });
+    console.error('R2 upload error:', err);
+    return res.status(500).json({ error: 'Errore durante il caricamento su Cloudflare R2' });
   }
 }
