@@ -24,7 +24,7 @@ export default async function handler(req, res) {
     const cleanFilename = `${Date.now()}-${filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
 
     const command = new PutObjectCommand({
-      Bucket: 'academy-videos', // Assicurati coincida con il nome del bucket su Cloudflare
+      Bucket: 'academy-video', // Assicurati coincida con il nome del bucket su Cloudflare
       Key: cleanFilename,
       ContentType: contentType || 'video/mp4',
     });
