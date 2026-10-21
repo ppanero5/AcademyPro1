@@ -20,7 +20,7 @@ export default async function handler(req, res) {
 
     // Creiamo il comando
     const command = new PutObjectCommand({
-      Bucket: 'academy-videos',
+      Bucket: 'academy-video',
       Key: cleanFilename,
       ContentType: contentType || 'video/mp4',
     });
