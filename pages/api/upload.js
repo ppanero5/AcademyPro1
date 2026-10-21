@@ -12,7 +12,7 @@ const s3 = new S3Client({
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: '100mb', // Supporta file fino a 100MB
+      sizeLimit: '100mb',
     },
   },
 };
