@@ -316,27 +316,47 @@ export default function App() {
     setActivities(activities.map(a => a.id === activityId ? { ...a, confirmations: newConf } : a));
   };
 
-  // --- UPLOAD VIDEO DIRETTO SU CLOUDFLARE R2 ---
+ // --- UPLOAD VIDEO DIRETTO SU CLOUDFLARE R2 TRAMITE PRESIGNED URL ---
   const handleUploadToCloudflare = async (e) => {
     e.preventDefault();
     if (!selectedRawFile) return;
 
     setUploading(true);
     try {
-      // 1. Invio in streaming all'API su Vercel verso Cloudflare R2
+      // 1. Chiediamo a Vercel l'URL autorizzato per Cloudflare
       const res = await fetch('/api/upload', {
         method: 'POST',
-        headers: { 'Content-Type': 'video/mp4' },
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: selectedRawFile.name || 'video.mp4',
+          contentType: selectedRawFile.type || 'video/mp4'
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error('Impossibile ottenere autorizzazione da Vercel');
+      }
+
+      const { uploadUrl, publicUrl } = await res.json();
+      if (!uploadUrl) throw new Error('Link upload mancante');
+
+      // 2. Inviamo il file video DIRETTAMENTE a Cloudflare R2 (nessun limite di dimensione)
+      const uploadRes = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': selectedRawFile.type || 'video/mp4'
+        },
         body: selectedRawFile
       });
 
-      const { url } = await res.json();
-      if (!url) throw new Error('Upload fallito');
+      if (!uploadRes.ok) {
+        throw new Error('Errore durante il trasferimento del video su Cloudflare');
+      }
 
       const taggedAthlete = members.find(m => m.id === videoTaggedAthleteId);
 
       const newVideo = {
-        video_url: url,
+        video_url: publicUrl,
         specialty: videoSpecialty,
         date: videoDate,
         location: videoLocation || 'Bardonecchia',
@@ -347,17 +367,19 @@ export default function App() {
         uploaded_by: currentUser.name
       };
 
-      // 2. Registrazione metadati su Supabase
+      // 3. Salvataggio metadati nel database Supabase
       if (supabase) {
-        const { data } = await supabase.from('video_library').insert([newVideo]).select();
+        const { data, error: sbError } = await supabase.from('video_library').insert([newVideo]).select();
+        if (sbError) throw sbError;
         if (data) setVideos([data[0], ...videos]);
       }
 
       setShowUploadModal(false);
       setSelectedRawFile(null);
-      alert('Video inviato e salvato su Cloudflare R2 con successo!');
+      alert('Video caricato con successo!');
     } catch (err) {
-      alert('Errore durante l\'invio del video a Cloudflare.');
+      console.error(err);
+      alert(`Errore caricamento: ${err.message || 'Verifica le credenziali R2 o la connessione'}`);
     } finally {
       setUploading(false);
     }
