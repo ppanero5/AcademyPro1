@@ -38,6 +38,5 @@ export default async function handler(req, res) {
     return res.status(200).json({ uploadUrl, publicUrl, filename: cleanFilename });
   } catch (err) {
     console.error('R2 upload error:', err);
-    return res.status(500).json({ error: err.message || 'Errore configurazione Cloudflare R2' });
+    return res.status(500).json({ error: `${err.name || 'Errore'}: ${err.message || 'Errore R2'}` });
   }
-}
