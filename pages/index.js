@@ -323,65 +323,62 @@ const handleUploadToCloudflare = async (e) => {
 
     setUploading(true);
     try {
-      // Conversione file in Base64 per invio sicuro
-      const reader = new FileReader();
-      reader.readAsDataURL(selectedRawFile);
-      
-      reader.onload = async () => {
-        try {
-          const res = await fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              filename: selectedRawFile.name || 'video.mp4',
-              fileData: reader.result,
-              contentType: selectedRawFile.type || 'video/mp4'
-            })
-          });
+      // 1. Richiedi a Vercel il Presigned URL per Cloudflare R2
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: selectedRawFile.name || 'video.mp4',
+          contentType: selectedRawFile.type || 'video/mp4',
+        }),
+      });
 
-          const dataRes = await res.json();
-          if (!res.ok || !dataRes.url && !dataRes.publicUrl) {
-            throw new Error(dataRes.error || 'Errore caricamento server');
-          }
+      const dataRes = await res.json();
+      if (!res.ok || !dataRes.uploadUrl) {
+        throw new Error(dataRes.error || 'Impossibile ottenere autorizzazione di upload');
+      }
 
-          const publicUrl = dataRes.publicUrl || dataRes.url;
-          const taggedAthlete = members.find(m => m.id === videoTaggedAthleteId);
+      // 2. Invia il file video direttamente a Cloudflare R2 (nessun limite di peso Vercel)
+      const uploadRes = await fetch(dataRes.uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': selectedRawFile.type || 'video/mp4',
+        },
+        body: selectedRawFile,
+      });
 
-          const newVideo = {
-            video_url: publicUrl,
-            specialty: videoSpecialty,
-            date: videoDate,
-            location: videoLocation || 'Bardonecchia',
-            slope: videoSlope || 'Pista Standard',
-            athlete_id: videoTaggedAthleteId,
-            athlete_name: taggedAthlete ? taggedAthlete.name : 'Non Taggato',
-            athlete_group: taggedAthlete ? taggedAthlete.category : 'Generale',
-            uploaded_by: currentUser.name
-          };
+      if (!uploadRes.ok) {
+        throw new Error(`Errore trasferimento R2: HTTP ${uploadRes.status}`);
+      }
 
-          if (supabase) {
-            const { data, error: sbErr } = await supabase.from('video_library').insert([newVideo]).select();
-            if (sbErr) throw sbErr;
-            if (data) setVideos([data[0], ...videos]);
-          }
+      const taggedAthlete = members.find(m => m.id === videoTaggedAthleteId);
 
-          setShowUploadModal(false);
-          setSelectedRawFile(null);
-          alert('Video caricato con successo!');
-        } catch (innerErr) {
-          alert(`Errore: ${innerErr.message}`);
-        } finally {
-          setUploading(false);
-        }
+      const newVideo = {
+        video_url: dataRes.publicUrl,
+        specialty: videoSpecialty,
+        date: videoDate,
+        location: videoLocation || 'Bardonecchia',
+        slope: videoSlope || 'Pista Standard',
+        athlete_id: videoTaggedAthleteId,
+        athlete_name: taggedAthlete ? taggedAthlete.name : 'Non Taggato',
+        athlete_group: taggedAthlete ? taggedAthlete.category : 'Generale',
+        uploaded_by: currentUser.name,
       };
 
-      reader.onerror = () => {
-        alert('Errore di lettura del file dal dispositivo');
-        setUploading(false);
-      };
+      // 3. Salva i metadati nel database Supabase
+      if (supabase) {
+        const { data, error: sbErr } = await supabase.from('video_library').insert([newVideo]).select();
+        if (sbErr) throw sbErr;
+        if (data) setVideos([data[0], ...videos]);
+      }
 
+      setShowUploadModal(false);
+      setSelectedRawFile(null);
+      alert('Video caricato con successo!');
     } catch (err) {
+      console.error(err);
       alert(`Errore: ${err.message}`);
+    } finally {
       setUploading(false);
     }
   };
