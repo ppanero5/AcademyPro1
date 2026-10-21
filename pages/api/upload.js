@@ -1,4 +1,5 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const s3 = new S3Client({
   region: 'auto',
@@ -9,39 +10,29 @@ const s3 = new S3Client({
   },
 });
 
-export const config = {
-  api: {
-    bodyParser: false, // Per consentire streaming di video pesanti fino a 90s/centinaia di MB
-  },
-};
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    const filename = `${Date.now()}-${Math.random().toString(36).substring(7)}.mp4`;
-    const chunks = [];
+    const { filename, contentType } = req.body;
+    const cleanFilename = `${Date.now()}-${filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
 
-    for await (const chunk of req) {
-      chunks.push(chunk);
-    }
-    const buffer = Buffer.concat(chunks);
+    // Creiamo il comando di caricamento
+    const command = new PutObjectCommand({
+      Bucket: 'academy-videos',
+      Key: cleanFilename,
+      ContentType: contentType || 'video/mp4',
+    });
 
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: 'academy-videos',
-        Key: filename,
-        Body: buffer,
-        ContentType: 'video/mp4',
-      })
-    );
+    // Genera un link temporaneo autorizzato valido 15 minuti
+    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 900 });
+    const publicUrl = `${process.env.NEXT_PUBLIC_CLOUDFLARE_PUBLIC_URL}/${cleanFilename}`;
 
-    const publicUrl = `${process.env.NEXT_PUBLIC_CLOUDFLARE_PUBLIC_URL}/${filename}`;
-    return res.status(200).json({ url: publicUrl });
+    return res.status(200).json({ uploadUrl, publicUrl });
   } catch (err) {
-    console.error('R2 upload error:', err);
-    return res.status(500).json({ error: 'Errore durante il caricamento del video su Cloudflare R2' });
+    console.error('Presigned URL error:', err);
+    return res.status(500).json({ error: 'Errore generazione link di upload' });
   }
 }
