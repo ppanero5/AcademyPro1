@@ -317,70 +317,71 @@ export default function App() {
   };
 
  // --- UPLOAD VIDEO DIRETTO SU CLOUDFLARE R2 TRAMITE PRESIGNED URL ---
-  const handleUploadToCloudflare = async (e) => {
+const handleUploadToCloudflare = async (e) => {
     e.preventDefault();
     if (!selectedRawFile) return;
 
     setUploading(true);
     try {
-      // 1. Chiediamo a Vercel l'URL autorizzato per Cloudflare
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: selectedRawFile.name || 'video.mp4',
-          contentType: selectedRawFile.type || 'video/mp4'
-        })
-      });
+      // Conversione file in Base64 per invio sicuro
+      const reader = new FileReader();
+      reader.readAsDataURL(selectedRawFile);
+      
+      reader.onload = async () => {
+        try {
+          const res = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filename: selectedRawFile.name || 'video.mp4',
+              fileData: reader.result,
+              contentType: selectedRawFile.type || 'video/mp4'
+            })
+          });
 
-      if (!res.ok) {
-        throw new Error('Impossibile ottenere autorizzazione da Vercel');
-      }
+          const dataRes = await res.json();
+          if (!res.ok || !dataRes.url && !dataRes.publicUrl) {
+            throw new Error(dataRes.error || 'Errore caricamento server');
+          }
 
-      const { uploadUrl, publicUrl } = await res.json();
-      if (!uploadUrl) throw new Error('Link upload mancante');
+          const publicUrl = dataRes.publicUrl || dataRes.url;
+          const taggedAthlete = members.find(m => m.id === videoTaggedAthleteId);
 
-      // 2. Inviamo il file video DIRETTAMENTE a Cloudflare R2 (nessun limite di dimensione)
-      const uploadRes = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': selectedRawFile.type || 'video/mp4'
-        },
-        body: selectedRawFile
-      });
+          const newVideo = {
+            video_url: publicUrl,
+            specialty: videoSpecialty,
+            date: videoDate,
+            location: videoLocation || 'Bardonecchia',
+            slope: videoSlope || 'Pista Standard',
+            athlete_id: videoTaggedAthleteId,
+            athlete_name: taggedAthlete ? taggedAthlete.name : 'Non Taggato',
+            athlete_group: taggedAthlete ? taggedAthlete.category : 'Generale',
+            uploaded_by: currentUser.name
+          };
 
-      if (!uploadRes.ok) {
-        throw new Error('Errore durante il trasferimento del video su Cloudflare');
-      }
+          if (supabase) {
+            const { data, error: sbErr } = await supabase.from('video_library').insert([newVideo]).select();
+            if (sbErr) throw sbErr;
+            if (data) setVideos([data[0], ...videos]);
+          }
 
-      const taggedAthlete = members.find(m => m.id === videoTaggedAthleteId);
-
-      const newVideo = {
-        video_url: publicUrl,
-        specialty: videoSpecialty,
-        date: videoDate,
-        location: videoLocation || 'Bardonecchia',
-        slope: videoSlope || 'Pista Standard',
-        athlete_id: videoTaggedAthleteId,
-        athlete_name: taggedAthlete ? taggedAthlete.name : 'Non Taggato',
-        athlete_group: taggedAthlete ? taggedAthlete.category : 'Generale',
-        uploaded_by: currentUser.name
+          setShowUploadModal(false);
+          setSelectedRawFile(null);
+          alert('Video caricato con successo!');
+        } catch (innerErr) {
+          alert(`Errore: ${innerErr.message}`);
+        } finally {
+          setUploading(false);
+        }
       };
 
-      // 3. Salvataggio metadati nel database Supabase
-      if (supabase) {
-        const { data, error: sbError } = await supabase.from('video_library').insert([newVideo]).select();
-        if (sbError) throw sbError;
-        if (data) setVideos([data[0], ...videos]);
-      }
+      reader.onerror = () => {
+        alert('Errore di lettura del file dal dispositivo');
+        setUploading(false);
+      };
 
-      setShowUploadModal(false);
-      setSelectedRawFile(null);
-      alert('Video caricato con successo!');
     } catch (err) {
-      console.error(err);
-      alert(`Errore caricamento: ${err.message || 'Verifica le credenziali R2 o la connessione'}`);
-    } finally {
+      alert(`Errore: ${err.message}`);
       setUploading(false);
     }
   };
