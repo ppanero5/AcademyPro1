@@ -45,13 +45,17 @@ export default function Home() {
   const [selectedAthleteForStats, setSelectedAthleteForStats] = useState(null);
 
   // --- FORM NUOVA ATTIVITÀ ---
-  const [actType, setActType] = useState('Allenamento');
-  const [actSpecialty, setActSpecialty] = useState('Gigante');
+  const [actType, setActType] = useState('Allenamento'); // Allenamento, Gara, Stage, Trasferta
+  const [actSpecialty, setActSpecialty] = useState('Gigante'); // Gigante, Slalom, SuperG, Campo Libero, Esercizi, Neve Fresca
   const [actDate, setActDate] = useState(new Date().toISOString().split('T')[0]);
   const [actNotes, setActNotes] = useState('');
   const [actCategory, setActCategory] = useState('Tutti');
 
-  // --- GESTIONE NOTE SUCCESSIVE ---
+  // --- SELEZIONE ATTIVITÀ PER APPELLO PRESENZE ---
+  const [selectedActivityId, setSelectedActivityId] = useState('');
+  const [attendance, setAttendance] = useState({});
+
+  // --- GESTIONE NOTE ---
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [updatedNoteText, setUpdatedNoteText] = useState('');
 
@@ -69,10 +73,18 @@ export default function Home() {
   const [videoTaggedAthleteId, setVideoTaggedAthleteId] = useState('');
   const [uploading, setUploading] = useState(false);
 
-  // --- FORM APPELLO ---
-  const [presenceDate, setPresenceDate] = useState(new Date().toISOString().split('T')[0]);
-  const [presenceSpecialty, setPresenceSpecialty] = useState('Gigante');
-  const [attendance, setAttendance] = useState({});
+  // HELPER CATEGORIE (PICCOLI VS GRANDI)
+  const isPiccoli = (cat) => ['Superbaby', 'Baby', 'Cuccioli'].includes(cat);
+
+  const canEditCategory = (category) => {
+    if (!currentUser) return false;
+    if (currentUser.role === 'admin') return true;
+    if (currentUser.role === 'athlete') return false;
+    if (!currentUser.coach_group || currentUser.coach_group === 'Tutti') return true;
+    if (currentUser.coach_group === 'Piccoli' && isPiccoli(category)) return true;
+    if (currentUser.coach_group === 'Grandi' && !isPiccoli(category)) return true;
+    return false;
+  };
 
   // 1. CARICAMENTO DATI SUPABASE
   useEffect(() => {
@@ -152,16 +164,18 @@ export default function Home() {
     }
   };
 
-  // 4. NUOVA ATTIVITÀ CON NOTE
+  // 4. NUOVA ATTIVITÀ CON NOTE ED ETICHETTE DEDICATE
   const handleCreateActivity = async (e) => {
     e.preventDefault();
     if (!supabase) return;
 
+    const formattedCategory = `${actType} | ${actSpecialty} | ${actCategory}`;
+
     const newAct = {
       date: actDate,
-      category: `${actType} - ${actSpecialty} (${actCategory})`,
+      category: formattedCategory,
       author_name: currentUser.name,
-      content: actNotes || 'Nessuna nota specificata.'
+      content: actNotes || 'Nessuna nota inserita.'
     };
 
     const { data, error } = await supabase.from('daily_notes').insert([newAct]).select();
@@ -174,41 +188,32 @@ export default function Home() {
       setActivities([data[0], ...activities]);
       setShowActivityModal(false);
       setActNotes('');
-      alert('Attività creata con successo!');
+      alert('Attività creata! Ora puoi fare l\'appello presenze per questa attività.');
     }
   };
 
-  // 5. AGGIORNAMENTO NOTA SUCCESSIVO
-  const handleUpdateNote = async (actId) => {
-    if (!supabase || !updatedNoteText.trim()) return;
-
-    const { error } = await supabase
-      .from('daily_notes')
-      .update({ content: updatedNoteText })
-      .eq('id', actId);
-
-    if (error) {
-      alert(`Errore aggiornamento nota: ${error.message}`);
-    } else {
-      setActivities(activities.map(a => a.id === actId ? { ...a, content: updatedNoteText } : a));
-      setEditingNoteId(null);
-      setUpdatedNoteText('');
-      alert('Nota aggiornata!');
-    }
-  };
-
-  // 6. SALVA APPELLO
+  // 5. SALVATAGGIO PRESENZE COLLEGATE ALL'ATTIVITÀ SELEZIONATA
   const handleSaveAttendance = async () => {
-    if (!supabase) return;
+    if (!supabase || !selectedActivityId) {
+      alert('Seleziona prima un\'attività dal menu a tendina!');
+      return;
+    }
+
+    const selectedAct = activities.find(a => String(a.id) === String(selectedActivityId));
+    if (!selectedAct) return;
+
+    // Estraiamo la specialità dal titolo dell'attività
+    const parts = selectedAct.category.split('|');
+    const specialtyName = parts[1] ? parts[1].trim() : 'Generale';
 
     try {
       const newEntries = [];
       Object.keys(attendance).forEach(athleteId => {
         if (attendance[athleteId]) {
           newEntries.push({
-            date: presenceDate,
+            date: selectedAct.date,
             athlete_id: athleteId,
-            specialty: presenceSpecialty,
+            specialty: specialtyName,
             status: 'present'
           });
         }
@@ -219,14 +224,14 @@ export default function Home() {
         if (aData) setAttendanceLogs([...attendanceLogs, ...aData]);
       }
 
-      alert('Appello salvato con successo!');
+      alert('Presenze salvate con successo per l\'attività!');
       setAttendance({});
     } catch (err) {
-      alert(`Errore nel salvataggio: ${err.message}`);
+      alert(`Errore nel salvataggio presenze: ${err.message}`);
     }
   };
 
-  // 7. UPLOAD VIDEO SU R2 TRAMITE PRESIGNED URL
+  // 6. UPLOAD VIDEO SU CLOUDFLARE R2 TRAMITE PRESIGNED URL
   const handleUploadToCloudflare = async (e) => {
     e.preventDefault();
     if (!selectedRawFile) return;
@@ -285,19 +290,6 @@ export default function Home() {
     } finally {
       setUploading(false);
     }
-  };
-
-  // HELPER CATEGORIE
-  const isPiccoli = (cat) => ['Superbaby', 'Baby', 'Cuccioli'].includes(cat);
-
-  const canEditCategory = (category) => {
-    if (!currentUser) return false;
-    if (currentUser.role === 'admin') return true;
-    if (currentUser.role === 'athlete') return false;
-    if (!currentUser.coach_group || currentUser.coach_group === 'Tutti') return true;
-    if (currentUser.coach_group === 'Piccoli' && isPiccoli(category)) return true;
-    if (currentUser.coach_group === 'Grandi' && !isPiccoli(category)) return true;
-    return false;
   };
 
   // FILTRI
@@ -410,7 +402,7 @@ export default function Home() {
         <button onClick={() => setCurrentUser(null)} style={styles.btnLogout}>Esci</button>
       </header>
 
-      {/* TABS DESKTOP (VISIBILI SOLO SU SCHERMI MEDI E GRANDE) */}
+      {/* TABS NAVIGAZIONE DESKTOP */}
       <nav style={styles.tabBarDesktop}>
         <button style={activeTab === 'videos' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('videos')}>
           📹 Video Library
@@ -509,32 +501,9 @@ export default function Home() {
                 <div key={act.id} style={styles.noteCard}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <strong>📅 {act.date} — {act.category}</strong>
-                    <span style={{ fontSize: '12px', color: '#64748b' }}>Autore: {act.author_name}</span>
+                    <span style={{ fontSize: '12px', color: '#64748b' }}>Coach: {act.author_name}</span>
                   </div>
-
-                  {editingNoteId === act.id ? (
-                    <div style={{ marginTop: '10px' }}>
-                      <textarea
-                        style={styles.textArea}
-                        value={updatedNoteText}
-                        onChange={(e) => setUpdatedNoteText(e.target.value)}
-                      />
-                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                        <button onClick={() => handleUpdateNote(act.id)} style={styles.btnPrimarySmall}>Salva Modifiche</button>
-                        <button onClick={() => setEditingNoteId(null)} style={styles.btnCancel}>Annulla</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <p style={{ margin: '8px 0', color: '#334155', whiteSpace: 'pre-wrap' }}>{act.content}</p>
-                      <button
-                        onClick={() => { setEditingNoteId(act.id); setUpdatedNoteText(act.content); }}
-                        style={{ background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '12px', padding: 0 }}
-                      >
-                        ✏️ Aggiungi / Modifica Nota
-                      </button>
-                    </>
-                  )}
+                  <p style={{ margin: '8px 0', color: '#334155', whiteSpace: 'pre-wrap' }}>{act.content}</p>
                 </div>
               ))
             )}
@@ -542,29 +511,30 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 3: PRESENZE */}
+      {/* TAB 3: PRESENZE COLLEGATE ALL'ATTIVITÀ */}
       {activeTab === 'presence' && (
         <main style={styles.mainContent}>
           <h3>Registro Appello Presenze</h3>
-          <div style={styles.formRow}>
-            <div>
-              <label style={styles.filterLabel}>Data: </label>
-              <input type="date" style={styles.input} value={presenceDate} onChange={(e) => setPresenceDate(e.target.value)} />
-            </div>
-            <div>
-              <label style={styles.filterLabel}>Specialità: </label>
-              <select style={styles.filterSelect} value={presenceSpecialty} onChange={(e) => setPresenceSpecialty(e.target.value)}>
-                <option value="Gigante">Gigante (GS)</option>
-                <option value="Slalom">Slalom (SL)</option>
-                <option value="SuperG">SuperG (SG)</option>
-                <option value="Campo Libero">Campo Libero</option>
-                <option value="Esercizi">Esercizi</option>
-                <option value="Neve Fresca">Neve Fresca</option>
-              </select>
-            </div>
+          <p style={styles.subTitle}>Seleziona un'attività programmata per compilare l'appello della tua categoria.</p>
+
+          <div style={{ marginBottom: '20px' }}>
+            <label style={styles.filterLabel}>Seleziona Attività del Giorno: </label>
+            <select
+              style={{ ...styles.input, width: '100%', marginTop: '6px' }}
+              value={selectedActivityId}
+              onChange={(e) => setSelectedActivityId(e.target.value)}
+            >
+              <option value="">-- Scegli un'Attività Programmata --</option>
+              {activities.map(act => (
+                <option key={act.id} value={act.id}>
+                  📅 {act.date} — {act.category}
+                </option>
+              ))}
+            </select>
           </div>
 
-          <div style={{ marginTop: '20px', marginBottom: '10px' }}>
+          {/* SEARCH BAR ATLETI */}
+          <div style={{ marginBottom: '16px' }}>
             <input
               type="text"
               style={styles.searchInput}
@@ -596,16 +566,16 @@ export default function Home() {
           </div>
 
           <button onClick={handleSaveAttendance} style={{ ...styles.btnPrimary, marginTop: '20px', width: '100%' }}>
-            Salva Appello Presenze
+            Conferma & Salva Presenze Attività
           </button>
         </main>
       )}
 
-      {/* TAB 4: SCHEDE & GRAFICI */}
+      {/* TAB 4: SCHEDE & GRAFICI A TORTA */}
       {activeTab === 'stats' && (
         <main style={styles.mainContent}>
-          <h3>Schede Atleti & Statistiche</h3>
-          <p style={styles.subTitle}>Seleziona un atleta per visualizzare presenze e grafico per specialità.</p>
+          <h3>Schede Atleti & Statistiche Stagionali</h3>
+          <p style={styles.subTitle}>Seleziona un atleta per visualizzare il resoconto completo delle attività svolte.</p>
 
           <div style={{ marginBottom: '20px' }}>
             <select
@@ -651,14 +621,14 @@ export default function Home() {
                 <div style={styles.statsLayout}>
                   <div style={{ textAlign: 'center' }}>
                     <div style={{ ...styles.pieChart, background: totalPresences > 0 ? pieConic : '#e2e8f0' }} />
-                    <p style={{ fontSize: '12px', color: '#64748b', marginTop: '8px' }}>Ripartizione Specialità</p>
+                    <p style={{ fontSize: '12px', color: '#64748b', marginTop: '8px' }}>Ripartizione Disciplina</p>
                   </div>
 
                   <div style={styles.legendList}>
                     <div><span style={{ ...styles.legendDot, backgroundColor: '#2563eb' }} /> Gigante: {gsCount} ({totalPresences ? Math.round((gsCount/totalPresences)*100) : 0}%)</div>
                     <div><span style={{ ...styles.legendDot, backgroundColor: '#0284c7' }} /> Slalom: {slCount} ({totalPresences ? Math.round((slCount/totalPresences)*100) : 0}%)</div>
                     <div><span style={{ ...styles.legendDot, backgroundColor: '#059669' }} /> SuperG: {sgCount} ({totalPresences ? Math.round((sgCount/totalPresences)*100) : 0}%)</div>
-                    <div><span style={{ ...styles.legendDot, backgroundColor: '#d97706' }} /> Altro / Libero: {clCount} ({totalPresences ? Math.round((clCount/totalPresences)*100) : 0}%)</div>
+                    <div><span style={{ ...styles.legendDot, backgroundColor: '#d97706' }} /> Campo Libero / Altro: {clCount} ({totalPresences ? Math.round((clCount/totalPresences)*100) : 0}%)</div>
                   </div>
                 </div>
               </div>
@@ -697,7 +667,7 @@ export default function Home() {
         </main>
       )}
 
-      {/* BOTTOM NAVIGATION BAR MOBILE (FISSA IN BASSO PER SMARTPHONE) */}
+      {/* BOTTOM BAR MOBILE */}
       <nav style={styles.bottomBarMobile}>
         <button style={activeTab === 'videos' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('videos')}>
           <span>📹</span>
@@ -834,7 +804,7 @@ export default function Home() {
   );
 }
 
-// STILI CON SUPPORTO DESKTOP & MOBILE BOTTOM BAR
+// DEFINIZIONE STILI GRAFICI
 const styles = {
   loginContainer: { minHeight: '100vh', backgroundColor: '#f8fafc', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' },
   loginCard: { backgroundColor: '#ffffff', padding: '32px', borderRadius: '16px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', color: '#0f172a', border: '1px solid #e2e8f0' },
@@ -860,7 +830,6 @@ const styles = {
   tab: { padding: '10px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#ffffff', color: '#475569', cursor: 'pointer', fontWeight: '600', border: '1px solid #e2e8f0' },
   tabActive: { padding: '10px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#1e3a8a', color: '#ffffff', fontWeight: 'bold', cursor: 'pointer' },
 
-  // BARRA DI NAVIGAZIONE FISSA IN BASSO PER TELEFONI
   bottomBarMobile: {
     position: 'fixed',
     bottom: 0,
@@ -868,7 +837,7 @@ const styles = {
     right: 0,
     backgroundColor: '#ffffff',
     display: 'flex',
-    justify: 'space-around',
+    justifyContent: 'space-around',
     alignItems: 'center',
     padding: '8px 0',
     borderTop: '1px solid #e2e8f0',
