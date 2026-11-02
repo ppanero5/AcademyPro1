@@ -215,7 +215,38 @@ export default function Home() {
     }
   };
 
-  // 5. SALVA PRESENZE ATTIVITÀ
+  // 5. CANCELLAZIONE ATTIVITÀ
+  const handleDeleteActivity = async (actId) => {
+    if (!confirm('Sei sicuro di voler eliminare questa attività?')) return;
+    if (!supabase) return;
+
+    const { error } = await supabase.from('daily_notes').delete().eq('id', actId);
+    if (error) {
+      alert(`Errore eliminazione attività: ${error.message}`);
+    } else {
+      setActivities(activities.filter(a => a.id !== actId));
+      if (String(selectedActivityId) === String(actId)) {
+        setSelectedActivityId('');
+      }
+      alert('Attività eliminata con successo.');
+    }
+  };
+
+  // 6. CANCELLAZIONE VIDEO
+  const handleDeleteVideo = async (videoId) => {
+    if (!confirm('Sei sicuro di voler eliminare questo video?')) return;
+    if (!supabase) return;
+
+    const { error } = await supabase.from('video_library').delete().eq('id', videoId);
+    if (error) {
+      alert(`Errore eliminazione video: ${error.message}`);
+    } else {
+      setVideos(videos.filter(v => v.id !== videoId));
+      alert('Video eliminato con successo.');
+    }
+  };
+
+  // 7. SALVA PRESENZE ATTIVITÀ
   const handleSaveAttendance = async () => {
     if (!supabase || !selectedActivityId) {
       alert('Seleziona prima un\'attività dal banner o dal menu a tendina!');
@@ -253,7 +284,7 @@ export default function Home() {
     }
   };
 
-  // 6. UPLOAD VIDEO SU CLOUDFLARE R2
+  // 8. UPLOAD VIDEO SU CLOUDFLARE R2
   const handleUploadToCloudflare = async (e) => {
     e.preventDefault();
     if (!selectedRawFile) return;
@@ -322,12 +353,10 @@ export default function Home() {
   const filteredMembers = members.filter(m => {
     if (m.role !== 'athlete') return false;
     
-    // 1. Filtro per Categoria dell'Attività selezionata
     if (selectedActivityCategoryTarget !== 'Tutti' && selectedActivityCategoryTarget !== '') {
       if (m.category !== selectedActivityCategoryTarget) return false;
     }
 
-    // 2. Filtro della Search Bar per nome
     const matchesSearch = m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.email.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesSearch;
   });
@@ -513,7 +542,12 @@ export default function Home() {
                 <div key={video.id} style={styles.videoCard}>
                   <video src={video.video_url} controls style={styles.videoPlayer} preload="metadata" />
                   <div style={styles.videoMeta}>
-                    <span style={styles.badgeSpecialty}>{video.specialty}</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={styles.badgeSpecialty}>{video.specialty}</span>
+                      {currentUser.role !== 'athlete' && (
+                        <button onClick={() => handleDeleteVideo(video.id)} style={styles.btnDeleteInline}>🗑️ Elimina</button>
+                      )}
+                    </div>
                     <h4 style={styles.videoTitle}>{video.athlete_name}</h4>
                     <p style={styles.videoSub}>📍 {video.location} - {video.slope}</p>
                     <p style={styles.videoDate}>📅 {video.date} | Coach: {video.uploaded_by}</p>
@@ -541,7 +575,10 @@ export default function Home() {
                 <div key={act.id} style={styles.noteCard}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <strong>📅 {act.date} — {act.category}</strong>
-                    <span style={{ fontSize: '12px', color: '#64748b' }}>Coach: {act.author_name}</span>
+                    <div>
+                      <span style={{ fontSize: '12px', color: '#64748b', marginRight: '10px' }}>Coach: {act.author_name}</span>
+                      <button onClick={() => handleDeleteActivity(act.id)} style={styles.btnDeleteInline}>🗑️ Elimina</button>
+                    </div>
                   </div>
                   <p style={{ margin: '8px 0', color: '#334155', whiteSpace: 'pre-wrap' }}>{act.content}</p>
                 </div>
@@ -551,7 +588,7 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 3: PRESENZE (FILTRATE PER CATEGORIA DELL'ATTIVITÀ) */}
+      {/* TAB 3: PRESENZE */}
       {activeTab === 'presence' && (
         <main style={styles.mainContent}>
           <h3>Registro Appello Presenze ({currentUser.coach_group || 'Generale'})</h3>
@@ -903,6 +940,7 @@ const styles = {
   btnPrimary: { padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: '#1e3a8a', color: '#ffffff', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' },
   btnSecondary: { padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: 'transparent', color: '#475569', marginTop: '12px', cursor: 'pointer', width: '100%' },
   btnCancel: { padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: '#94a3b8', color: '#ffffff', cursor: 'pointer' },
+  btnDeleteInline: { backgroundColor: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   errorText: { color: '#ef4444', fontSize: '13px', margin: '4px 0' },
 
   dashboardContainer: { minHeight: '100vh', backgroundColor: '#ffffff', color: '#0f172a', fontFamily: 'sans-serif', paddingBottom: '70px' },
