@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-// Supabase Init
+// Inizializzazione Client Supabase
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const supabase = (supabaseUrl && supabaseAnonKey) ? createClient(supabaseUrl, supabaseAnonKey) : null;
@@ -23,13 +23,13 @@ export default function Home() {
   const [loginPassword, setLoginPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
-  // --- DATI ---
+  // --- DATI REPO ---
   const [members, setMembers] = useState([]);
   const [videos, setVideos] = useState([]);
   const [activities, setActivities] = useState([]);
   const [attendanceLogs, setAttendanceLogs] = useState([]);
 
-  // --- REGISTRAZIONE ---
+  // --- FORM REGISTRAZIONE ---
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
@@ -49,15 +49,11 @@ export default function Home() {
   const [actSpecialty, setActSpecialty] = useState('Gigante'); // Gigante, Slalom, SuperG, Campo Libero, Esercizi, Neve Fresca
   const [actDate, setActDate] = useState(new Date().toISOString().split('T')[0]);
   const [actNotes, setActNotes] = useState('');
-  const [actCategory, setActCategory] = useState('Tutti');
+  const [actCategoryTarget, setActCategoryTarget] = useState('Cuccioli'); // Categoria specifica o Tutti
 
-  // --- SELEZIONE ATTIVITÀ PER APPELLO PRESENZE ---
+  // --- SELEZIONE ATTIVITÀ PER APPELLO ---
   const [selectedActivityId, setSelectedActivityId] = useState('');
   const [attendance, setAttendance] = useState({});
-
-  // --- GESTIONE NOTE ---
-  const [editingNoteId, setEditingNoteId] = useState(null);
-  const [updatedNoteText, setUpdatedNoteText] = useState('');
 
   // --- RICERCA E FILTRI ---
   const [searchQuery, setSearchQuery] = useState('');
@@ -106,6 +102,32 @@ export default function Home() {
 
     fetchData();
   }, []);
+
+  // SELEZIONE AUTOMATICA ATTIVITÀ DI OGGI SE PRESENTE
+  useEffect(() => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todayAct = activities.find(a => a.date === todayStr && isActivityVisibleForUser(a));
+    if (todayAct) {
+      setSelectedActivityId(String(todayAct.id));
+    }
+  }, [activities, currentUser]);
+
+  // HELPER VISIBILITÀ ATTIVITÀ IN BASE AL GRUPPO COACH
+  const isActivityVisibleForUser = (act) => {
+    if (!currentUser) return false;
+    if (currentUser.role === 'admin' || currentUser.coach_group === 'Tutti') return true;
+    
+    const catTarget = act.category || '';
+    if (catTarget.includes('Tutti')) return true;
+
+    if (currentUser.coach_group === 'Piccoli') {
+      return ['Superbaby', 'Baby', 'Cuccioli', 'Piccoli'].some(c => catTarget.includes(c));
+    }
+    if (currentUser.coach_group === 'Grandi') {
+      return ['Ragazzi', 'Allievi', 'Giovani', 'Senior', 'Master', 'Grandi'].some(c => catTarget.includes(c));
+    }
+    return true;
+  };
 
   // 2. LOGIN
   const handleLogin = async (e) => {
@@ -164,12 +186,12 @@ export default function Home() {
     }
   };
 
-  // 4. NUOVA ATTIVITÀ CON NOTE ED ETICHETTE DEDICATE
+  // 4. NUOVA ATTIVITÀ
   const handleCreateActivity = async (e) => {
     e.preventDefault();
     if (!supabase) return;
 
-    const formattedCategory = `${actType} | ${actSpecialty} | ${actCategory}`;
+    const formattedCategory = `${actType} | ${actSpecialty} | ${actCategoryTarget}`;
 
     const newAct = {
       date: actDate,
@@ -188,21 +210,21 @@ export default function Home() {
       setActivities([data[0], ...activities]);
       setShowActivityModal(false);
       setActNotes('');
-      alert('Attività creata! Ora puoi fare l\'appello presenze per questa attività.');
+      setSelectedActivityId(String(data[0].id));
+      alert('Attività creata e selezionata per l\'appello!');
     }
   };
 
-  // 5. SALVATAGGIO PRESENZE COLLEGATE ALL'ATTIVITÀ SELEZIONATA
+  // 5. SALVA PRESENZE ATTIVITÀ
   const handleSaveAttendance = async () => {
     if (!supabase || !selectedActivityId) {
-      alert('Seleziona prima un\'attività dal menu a tendina!');
+      alert('Seleziona un\'attività valida dal menu a tendina o dal banner!');
       return;
     }
 
     const selectedAct = activities.find(a => String(a.id) === String(selectedActivityId));
     if (!selectedAct) return;
 
-    // Estraiamo la specialità dal titolo dell'attività
     const parts = selectedAct.category.split('|');
     const specialtyName = parts[1] ? parts[1].trim() : 'Generale';
 
@@ -231,7 +253,7 @@ export default function Home() {
     }
   };
 
-  // 6. UPLOAD VIDEO SU CLOUDFLARE R2 TRAMITE PRESIGNED URL
+  // 6. UPLOAD VIDEO SU CLOUDFLARE R2
   const handleUploadToCloudflare = async (e) => {
     e.preventDefault();
     if (!selectedRawFile) return;
@@ -292,11 +314,13 @@ export default function Home() {
     }
   };
 
-  // FILTRI
+  // ATLETI FILTRATI PER LA RICERCA E IL GRUPPO
   const filteredMembers = members.filter(m => {
-    return m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.email.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.email.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesSearch;
   });
 
+  // VIDEO VISIBILI
   const visibleVideos = videos.filter(video => {
     if (currentUser?.role === 'athlete' || currentUser?.role === 'atleta') {
       return String(video.athlete_id) === String(currentUser.id);
@@ -311,6 +335,11 @@ export default function Home() {
     }
     return true;
   });
+
+  // ATTIVITÀ VISIBILI FILTRATE PER IL GRUPPO DEL COACH
+  const groupVisibleActivities = activities.filter(isActivityVisibleForUser);
+  const todayStr = new Date().toISOString().split('T')[0];
+  const todayActivities = groupVisibleActivities.filter(a => a.date === todayStr);
 
   // SCHERMATA LOGIN
   if (!currentUser) {
@@ -402,7 +431,7 @@ export default function Home() {
         <button onClick={() => setCurrentUser(null)} style={styles.btnLogout}>Esci</button>
       </header>
 
-      {/* TABS NAVIGAZIONE DESKTOP */}
+      {/* TABS DESKTOP */}
       <nav style={styles.tabBarDesktop}>
         <button style={activeTab === 'videos' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('videos')}>
           📹 Video Library
@@ -485,19 +514,19 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 2: ATTIVITÀ & NOTE */}
+      {/* TAB 2: ATTIVITÀ & NOTE (FILTRATE PER IL GRUPPO DEL COACH) */}
       {activeTab === 'activities' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
-            <h3>Gestione Attività & Programmazione</h3>
+            <h3>Attività & Programmazione ({currentUser.coach_group || 'Tutti'})</h3>
             <button onClick={() => setShowActivityModal(true)} style={styles.btnPrimarySmall}>+ Nuova Attività</button>
           </div>
 
           <div style={{ marginTop: '20px' }}>
-            {activities.length === 0 ? (
-              <p style={{ color: '#94a3b8' }}>Nessuna attività programmata.</p>
+            {groupVisibleActivities.length === 0 ? (
+              <p style={{ color: '#94a3b8' }}>Nessuna attività programmata per il tuo gruppo.</p>
             ) : (
-              activities.map(act => (
+              groupVisibleActivities.map(act => (
                 <div key={act.id} style={styles.noteCard}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <strong>📅 {act.date} — {act.category}</strong>
@@ -511,21 +540,52 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 3: PRESENZE COLLEGATE ALL'ATTIVITÀ */}
+      {/* TAB 3: PRESENZE (BANNER OGGI + MENU STORICO + SOLI ATLETI GRUPPO) */}
       {activeTab === 'presence' && (
         <main style={styles.mainContent}>
-          <h3>Registro Appello Presenze</h3>
-          <p style={styles.subTitle}>Seleziona un'attività programmata per compilare l'appello della tua categoria.</p>
+          <h3>Registro Appello Presenze ({currentUser.coach_group || 'Generale'})</h3>
 
-          <div style={{ marginBottom: '20px' }}>
-            <label style={styles.filterLabel}>Seleziona Attività del Giorno: </label>
+          {/* BANNER IN SOVRAIMPRESSIONE ATTIVITÀ DI OGGI */}
+          {todayActivities.length > 0 ? (
+            <div style={styles.todayBannerContainer}>
+              <h4 style={{ margin: '0 0 10px 0', color: '#1e3a8a' }}>⚡ ATTIVITÀ DI OGGI IN PROGRAMMA:</h4>
+              <div style={styles.todayGrid}>
+                {todayActivities.map(tAct => {
+                  const isSelected = String(selectedActivityId) === String(tAct.id);
+                  return (
+                    <div
+                      key={tAct.id}
+                      onClick={() => setSelectedActivityId(String(tAct.id))}
+                      style={{
+                        ...styles.todayCard,
+                        borderColor: isSelected ? '#2563eb' : '#cbd5e1',
+                        backgroundColor: isSelected ? '#eff6ff' : '#ffffff'
+                      }}
+                    >
+                      <strong>{tAct.category}</strong>
+                      <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748b' }}>Note: {tAct.content}</p>
+                      {isSelected && <span style={styles.activeTag}>SELEZIONATA PER APPELLO ✅</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div style={styles.noTodayBanner}>
+              <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>ℹ️ Nessuna attività creata per la data di oggi per il tuo gruppo. Puoi selezionarne una dal menu sotto o crearne una nuova.</p>
+            </div>
+          )}
+
+          {/* RICERCA STORICO ATTIVITÀ PASSATE */}
+          <div style={{ marginBottom: '20px', marginTop: '16px' }}>
+            <label style={styles.filterLabel}>Oppure cerca un'altra Attività nel Registro: </label>
             <select
               style={{ ...styles.input, width: '100%', marginTop: '6px' }}
               value={selectedActivityId}
               onChange={(e) => setSelectedActivityId(e.target.value)}
             >
-              <option value="">-- Scegli un'Attività Programmata --</option>
-              {activities.map(act => (
+              <option value="">-- Seleziona un'Attività Passata o Futura --</option>
+              {groupVisibleActivities.map(act => (
                 <option key={act.id} value={act.id}>
                   📅 {act.date} — {act.category}
                 </option>
@@ -533,7 +593,7 @@ export default function Home() {
             </select>
           </div>
 
-          {/* SEARCH BAR ATLETI */}
+          {/* SEARCH BAR PER ATLETI */}
           <div style={{ marginBottom: '16px' }}>
             <input
               type="text"
@@ -544,14 +604,15 @@ export default function Home() {
             />
           </div>
 
+          {/* ELENCO ATLETI CON CONTROLLO EDITABILITÀ PER GRUPPO */}
           <div style={styles.membersList}>
             {filteredMembers.filter(m => m.role === 'athlete').map(athlete => {
               const editable = canEditCategory(athlete.category);
               return (
-                <div key={athlete.id} style={styles.memberRow}>
+                <div key={athlete.id} style={{ ...styles.memberRow, opacity: editable ? 1 : 0.6 }}>
                   <div>
                     <strong>{athlete.name}</strong> ({athlete.category})
-                    {!editable && <span style={styles.readOnlyTag}> (Sola Lettura)</span>}
+                    {!editable && <span style={styles.readOnlyTag}> (Altro Gruppo - Sola Lettura)</span>}
                   </div>
                   <button
                     disabled={!editable}
@@ -566,7 +627,7 @@ export default function Home() {
           </div>
 
           <button onClick={handleSaveAttendance} style={{ ...styles.btnPrimary, marginTop: '20px', width: '100%' }}>
-            Conferma & Salva Presenze Attività
+            Conferma Presenze Attività
           </button>
         </main>
       )}
@@ -725,7 +786,7 @@ export default function Home() {
               </select>
 
               <label style={styles.label}>Categoria Destinataria</label>
-              <select style={styles.input} value={actCategory} onChange={(e) => setActCategory(e.target.value)}>
+              <select style={styles.input} value={actCategoryTarget} onChange={(e) => setActCategoryTarget(e.target.value)}>
                 <option value="Tutti">Tutte le Categorie</option>
                 <option value="Superbaby">Superbaby</option>
                 <option value="Baby">Baby</option>
@@ -804,7 +865,7 @@ export default function Home() {
   );
 }
 
-// DEFINIZIONE STILI GRAFICI
+// DEFINIZIONE STILI GRAFICI CON BANNER OGGI
 const styles = {
   loginContainer: { minHeight: '100vh', backgroundColor: '#f8fafc', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' },
   loginCard: { backgroundColor: '#ffffff', padding: '32px', borderRadius: '16px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', color: '#0f172a', border: '1px solid #e2e8f0' },
@@ -844,31 +905,9 @@ const styles = {
     boxShadow: '0 -2px 10px rgba(0,0,0,0.05)',
     zIndex: 999
   },
-  bottomTab: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    background: 'none',
-    border: 'none',
-    color: '#64748b',
-    fontSize: '18px',
-    cursor: 'pointer'
-  },
-  bottomTabActive: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    background: 'none',
-    border: 'none',
-    color: '#1e3a8a',
-    fontWeight: 'bold',
-    fontSize: '18px',
-    cursor: 'pointer'
-  },
-  bottomTabLabel: {
-    fontSize: '10px',
-    marginTop: '2px'
-  },
+  bottomTab: { display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'none', border: 'none', color: '#64748b', fontSize: '18px', cursor: 'pointer' },
+  bottomTabActive: { display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'none', border: 'none', color: '#1e3a8a', fontWeight: 'bold', fontSize: '18px', cursor: 'pointer' },
+  bottomTabLabel: { fontSize: '10px', marginTop: '2px' },
 
   mainContent: { padding: '24px', maxWidth: '1200px', margin: '0 auto' },
   sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
@@ -878,6 +917,12 @@ const styles = {
   filterLabel: { fontSize: '13px', color: '#475569', marginRight: '8px', fontWeight: '600' },
   filterSelect: { padding: '6px 10px', borderRadius: '6px', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', color: '#0f172a' },
   formRow: { display: 'flex', gap: '20px', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0' },
+
+  todayBannerContainer: { backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', padding: '16px', borderRadius: '12px', marginBottom: '20px' },
+  todayGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '12px', marginTop: '8px' },
+  todayCard: { padding: '12px', borderRadius: '8px', border: '2px solid', cursor: 'pointer', transition: 'all 0.2s ease' },
+  activeTag: { display: 'inline-block', marginTop: '8px', fontSize: '10px', fontWeight: 'bold', color: '#2563eb' },
+  noTodayBanner: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '12px 16px', borderRadius: '8px', marginBottom: '16px' },
 
   videoGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' },
   videoCard: { backgroundColor: '#ffffff', borderRadius: '12px', overflow: 'hidden', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.03)' },
