@@ -508,7 +508,7 @@ export default function Home() {
                 onChange={(e) => setVideoSpecialty(e.target.value)}
               >
                 <option value="Gigante">Gigante (GS)</option>
-                <option value="Special":>Special (SL)</option>
+                <option value="Special">Special (SL)</option>
                 <option value="SuperG">SuperG (SG)</option>
                 <option value="Campo Libero">Campo Libero</option>
               </select>
