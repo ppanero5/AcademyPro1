@@ -6,7 +6,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const supabase = (supabaseUrl && supabaseAnonKey) ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
-// Account Super Admin di Emergenza (Fallback)
+// Account Super Admin Fallback
 const SUPER_ADMIN = {
   id: 'super-admin-id',
   email: 'superadmin@skirank.it',
@@ -26,7 +26,7 @@ export default function Home() {
   // --- DATI ---
   const [members, setMembers] = useState([]);
   const [videos, setVideos] = useState([]);
-  const [dailyNotes, setDailyNotes] = useState([]);
+  const [activities, setActivities] = useState([]);
   const [attendanceLogs, setAttendanceLogs] = useState([]);
 
   // --- REGISTRAZIONE ---
@@ -38,10 +38,22 @@ export default function Home() {
   const [regCoachGroup, setRegCoachGroup] = useState('Piccoli');
 
   // --- NAVIGAZIONE E MODALI ---
-  const [activeTab, setActiveTab] = useState('videos');
+  const [activeTab, setActiveTab] = useState('videos'); // 'videos', 'activities', 'presence', 'stats', 'members'
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [showActivityModal, setShowActivityModal] = useState(false);
   const [showRegModal, setShowRegModal] = useState(false);
   const [selectedAthleteForStats, setSelectedAthleteForStats] = useState(null);
+
+  // --- FORM NUOVA ATTIVITÀ ---
+  const [actType, setActType] = useState('Allenamento');
+  const [actSpecialty, setActSpecialty] = useState('Gigante');
+  const [actDate, setActDate] = useState(new Date().toISOString().split('T')[0]);
+  const [actNotes, setActNotes] = useState('');
+  const [actCategory, setActCategory] = useState('Tutti');
+
+  // --- GESTIONE NOTE SUCCESSIVE ---
+  const [editingNoteId, setEditingNoteId] = useState(null);
+  const [updatedNoteText, setUpdatedNoteText] = useState('');
 
   // --- RICERCA E FILTRI ---
   const [searchQuery, setSearchQuery] = useState('');
@@ -57,13 +69,12 @@ export default function Home() {
   const [videoTaggedAthleteId, setVideoTaggedAthleteId] = useState('');
   const [uploading, setUploading] = useState(false);
 
-  // --- FORM APPELLO & NOTE ---
+  // --- FORM APPELLO ---
   const [presenceDate, setPresenceDate] = useState(new Date().toISOString().split('T')[0]);
   const [presenceSpecialty, setPresenceSpecialty] = useState('Gigante');
-  const [dailyNoteText, setDailyNoteText] = useState('');
   const [attendance, setAttendance] = useState({});
 
-  // 1. CARICAMENTO DATI DA SUPABASE
+  // 1. CARICAMENTO DATI SUPABASE
   useEffect(() => {
     if (!supabase) return;
 
@@ -74,8 +85,8 @@ export default function Home() {
       const { data: videoData } = await supabase.from('video_library').select('*').order('created_at', { ascending: false });
       if (videoData) setVideos(videoData);
 
-      const { data: notesData } = await supabase.from('daily_notes').select('*').order('created_at', { ascending: false });
-      if (notesData) setDailyNotes(notesData || []);
+      const { data: actData } = await supabase.from('daily_notes').select('*').order('created_at', { ascending: false });
+      if (actData) setActivities(actData || []);
 
       const { data: attData } = await supabase.from('attendance_history').select('*');
       if (attData) setAttendanceLogs(attData || []);
@@ -84,7 +95,7 @@ export default function Home() {
     fetchData();
   }, []);
 
-  // 2. LOGICA LOGIN
+  // 2. LOGIN
   const handleLogin = async (e) => {
     e.preventDefault();
     setAuthError('');
@@ -113,7 +124,7 @@ export default function Home() {
     }
   };
 
-  // 3. REGISTRAZIONE NUOVO ACC
+  // 3. REGISTRAZIONE UTENTE
   const handleRegister = async (e) => {
     e.preventDefault();
     if (!regName || !regEmail || !regPassword) return;
@@ -141,7 +152,81 @@ export default function Home() {
     }
   };
 
-  // 4. UPLOAD VIDEO SU CLOUDFLARE R2
+  // 4. NUOVA ATTIVITÀ CON NOTE
+  const handleCreateActivity = async (e) => {
+    e.preventDefault();
+    if (!supabase) return;
+
+    const newAct = {
+      date: actDate,
+      category: `${actType} - ${actSpecialty} (${actCategory})`,
+      author_name: currentUser.name,
+      content: actNotes || 'Nessuna nota specificata.'
+    };
+
+    const { data, error } = await supabase.from('daily_notes').insert([newAct]).select();
+    if (error) {
+      alert(`Errore creazione attività: ${error.message}`);
+      return;
+    }
+
+    if (data) {
+      setActivities([data[0], ...activities]);
+      setShowActivityModal(false);
+      setActNotes('');
+      alert('Attività creata con successo!');
+    }
+  };
+
+  // 5. AGGIORNAMENTO NOTA SUCCESSIVO
+  const handleUpdateNote = async (actId) => {
+    if (!supabase || !updatedNoteText.trim()) return;
+
+    const { error } = await supabase
+      .from('daily_notes')
+      .update({ content: updatedNoteText })
+      .eq('id', actId);
+
+    if (error) {
+      alert(`Errore aggiornamento nota: ${error.message}`);
+    } else {
+      setActivities(activities.map(a => a.id === actId ? { ...a, content: updatedNoteText } : a));
+      setEditingNoteId(null);
+      setUpdatedNoteText('');
+      alert('Nota aggiornata!');
+    }
+  };
+
+  // 6. SALVA APPELLO
+  const handleSaveAttendance = async () => {
+    if (!supabase) return;
+
+    try {
+      const newEntries = [];
+      Object.keys(attendance).forEach(athleteId => {
+        if (attendance[athleteId]) {
+          newEntries.push({
+            date: presenceDate,
+            athlete_id: athleteId,
+            specialty: presenceSpecialty,
+            status: 'present'
+          });
+        }
+      });
+
+      if (newEntries.length > 0) {
+        const { data: aData } = await supabase.from('attendance_history').insert(newEntries).select();
+        if (aData) setAttendanceLogs([...attendanceLogs, ...aData]);
+      }
+
+      alert('Appello salvato con successo!');
+      setAttendance({});
+    } catch (err) {
+      alert(`Errore nel salvataggio: ${err.message}`);
+    }
+  };
+
+  // 7. UPLOAD VIDEO SU R2 TRAMITE PRESIGNED URL
   const handleUploadToCloudflare = async (e) => {
     e.preventDefault();
     if (!selectedRawFile) return;
@@ -202,48 +287,7 @@ export default function Home() {
     }
   };
 
-  // 5. SALVATAGGIO APPELLO E NOTE
-  const handleSaveAttendanceAndNotes = async () => {
-    if (!supabase) return;
-
-    try {
-      if (dailyNoteText.trim()) {
-        const newNote = {
-          date: presenceDate,
-          category: currentUser.coach_group || 'Generale',
-          author_name: currentUser.name,
-          content: dailyNoteText
-        };
-        const { data: nData } = await supabase.from('daily_notes').insert([newNote]).select();
-        if (nData) setDailyNotes([nData[0], ...dailyNotes]);
-      }
-
-      const newEntries = [];
-      Object.keys(attendance).forEach(athleteId => {
-        if (attendance[athleteId]) {
-          newEntries.push({
-            date: presenceDate,
-            athlete_id: athleteId,
-            specialty: presenceSpecialty,
-            status: 'present'
-          });
-        }
-      });
-
-      if (newEntries.length > 0) {
-        const { data: aData } = await supabase.from('attendance_history').insert(newEntries).select();
-        if (aData) setAttendanceLogs([...attendanceLogs, ...aData]);
-      }
-
-      alert('Appello e Note salvati con successo!');
-      setDailyNoteText('');
-      setAttendance({});
-    } catch (err) {
-      alert(`Errore nel salvataggio: ${err.message}`);
-    }
-  };
-
-  // HELPER PER RICONOSCIMENTO CATEGORIE (PICCOLI VS GRANDI)
+  // HELPER CATEGORIE
   const isPiccoli = (cat) => ['Superbaby', 'Baby', 'Cuccioli'].includes(cat);
 
   const canEditCategory = (category) => {
@@ -256,27 +300,23 @@ export default function Home() {
     return false;
   };
 
-  // FILTRO RICERCA PER NOME
+  // FILTRI
   const filteredMembers = members.filter(m => {
     return m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.email.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
-  // FILTRO INTELLIGENTE PER I VIDEO
   const visibleVideos = videos.filter(video => {
     if (currentUser?.role === 'athlete' || currentUser?.role === 'atleta') {
       return String(video.athlete_id) === String(currentUser.id);
     }
-    
     if (selectedCategoryFilter !== 'Tutti') {
       const group = (video.athlete_group || '').toLowerCase();
       const filter = selectedCategoryFilter.toLowerCase();
       if (!group.includes(filter)) return false;
     }
-    
     if (selectedAthleteFilter !== 'Tutti' && String(video.athlete_id) !== String(selectedAthleteFilter)) {
       return false;
     }
-    
     return true;
   });
 
@@ -290,39 +330,23 @@ export default function Home() {
 
           <form onSubmit={handleLogin} style={styles.form}>
             <label style={styles.label}>Email</label>
-            <input
-              type="email"
-              style={styles.input}
-              value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)}
-              placeholder="utente@skiclub.it"
-              required
-            />
+            <input type="email" style={styles.input} value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} placeholder="utente@skiclub.it" required />
 
             <label style={styles.label}>Password</label>
-            <input
-              type="password"
-              style={styles.input}
-              value={loginPassword}
-              onChange={(e) => setLoginPassword(e.target.value)}
-              placeholder="••••••••"
-              required
-            />
+            <input type="password" style={styles.input} value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} placeholder="••••••••" required />
 
             {authError && <p style={styles.errorText}>{authError}</p>}
             <button type="submit" style={styles.btnPrimary}>Accedi</button>
           </form>
 
-          <button onClick={() => setShowRegModal(true)} style={styles.btnSecondary}>
-            Registra Account
-          </button>
+          <button onClick={() => setShowRegModal(true)} style={styles.btnSecondary}>Registra Account</button>
         </div>
 
         {/* MODALE REGISTRAZIONE */}
         {showRegModal && (
           <div style={styles.modalOverlay}>
             <div style={styles.modalCard}>
-              <h3 style={styles.modalTitle}>Crea Nuovo Account</h3>
+              <h3 style={styles.modalTitle}>Nuovo Account</h3>
               <form onSubmit={handleRegister} style={styles.form}>
                 <label style={styles.label}>Nome e Cognome</label>
                 <input type="text" style={styles.input} value={regName} onChange={(e) => setRegName(e.target.value)} required />
@@ -386,15 +410,20 @@ export default function Home() {
         <button onClick={() => setCurrentUser(null)} style={styles.btnLogout}>Esci</button>
       </header>
 
-      {/* TABS DI NAVIGAZIONE */}
-      <nav style={styles.tabBar}>
+      {/* TABS DESKTOP (VISIBILI SOLO SU SCHERMI MEDI E GRANDE) */}
+      <nav style={styles.tabBarDesktop}>
         <button style={activeTab === 'videos' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('videos')}>
           📹 Video Library
         </button>
         {currentUser.role !== 'athlete' && (
-          <button style={activeTab === 'presence' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('presence')}>
-            📋 Appello & Note
-          </button>
+          <>
+            <button style={activeTab === 'activities' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('activities')}>
+              📅 Attività & Note
+            </button>
+            <button style={activeTab === 'presence' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('presence')}>
+              📋 Presenze
+            </button>
+          </>
         )}
         <button style={activeTab === 'stats' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('stats')}>
           📊 Schede & Grafici
@@ -406,7 +435,7 @@ export default function Home() {
         )}
       </nav>
 
-      {/* VISTA 1: LIBRERIA VIDEO */}
+      {/* TAB 1: VIDEO LIBRARY */}
       {activeTab === 'videos' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
@@ -445,7 +474,7 @@ export default function Home() {
           )}
 
           {visibleVideos.length === 0 ? (
-            <div style={styles.emptyState}><p>Nessun video trovato per la selezione impostata.</p></div>
+            <div style={styles.emptyState}><p>Nessun video trovato.</p></div>
           ) : (
             <div style={styles.videoGrid}>
               {visibleVideos.map((video) => (
@@ -464,34 +493,75 @@ export default function Home() {
         </main>
       )}
 
-      {/* VISTA 2: APPELLO & NOTE */}
+      {/* TAB 2: ATTIVITÀ & NOTE */}
+      {activeTab === 'activities' && (
+        <main style={styles.mainContent}>
+          <div style={styles.sectionHeader}>
+            <h3>Gestione Attività & Programmazione</h3>
+            <button onClick={() => setShowActivityModal(true)} style={styles.btnPrimarySmall}>+ Nuova Attività</button>
+          </div>
+
+          <div style={{ marginTop: '20px' }}>
+            {activities.length === 0 ? (
+              <p style={{ color: '#94a3b8' }}>Nessuna attività programmata.</p>
+            ) : (
+              activities.map(act => (
+                <div key={act.id} style={styles.noteCard}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong>📅 {act.date} — {act.category}</strong>
+                    <span style={{ fontSize: '12px', color: '#64748b' }}>Autore: {act.author_name}</span>
+                  </div>
+
+                  {editingNoteId === act.id ? (
+                    <div style={{ marginTop: '10px' }}>
+                      <textarea
+                        style={styles.textArea}
+                        value={updatedNoteText}
+                        onChange={(e) => setUpdatedNoteText(e.target.value)}
+                      />
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                        <button onClick={() => handleUpdateNote(act.id)} style={styles.btnPrimarySmall}>Salva Modifiche</button>
+                        <button onClick={() => setEditingNoteId(null)} style={styles.btnCancel}>Annulla</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <p style={{ margin: '8px 0', color: '#334155', whiteSpace: 'pre-wrap' }}>{act.content}</p>
+                      <button
+                        onClick={() => { setEditingNoteId(act.id); setUpdatedNoteText(act.content); }}
+                        style={{ background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '12px', padding: 0 }}
+                      >
+                        ✏️ Aggiungi / Modifica Nota
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </main>
+      )}
+
+      {/* TAB 3: PRESENZE */}
       {activeTab === 'presence' && (
         <main style={styles.mainContent}>
-          <h3>Registro Appello & Note Giornaliere</h3>
+          <h3>Registro Appello Presenze</h3>
           <div style={styles.formRow}>
             <div>
-              <label style={styles.filterLabel}>Data Allenamento: </label>
+              <label style={styles.filterLabel}>Data: </label>
               <input type="date" style={styles.input} value={presenceDate} onChange={(e) => setPresenceDate(e.target.value)} />
             </div>
             <div>
               <label style={styles.filterLabel}>Specialità: </label>
               <select style={styles.filterSelect} value={presenceSpecialty} onChange={(e) => setPresenceSpecialty(e.target.value)}>
                 <option value="Gigante">Gigante (GS)</option>
-                <option value="Special">Special (SL)</option>
+                <option value="Slalom">Slalom (SL)</option>
                 <option value="SuperG">SuperG (SG)</option>
                 <option value="Campo Libero">Campo Libero</option>
+                <option value="Esercizi">Esercizi</option>
+                <option value="Neve Fresca">Neve Fresca</option>
               </select>
             </div>
-          </div>
-
-          <div style={{ marginTop: '20px' }}>
-            <label style={styles.label}>Note Allenamento (Condizioni neve, tipo di tracciato, correzioni):</label>
-            <textarea
-              style={styles.textArea}
-              value={dailyNoteText}
-              onChange={(e) => setDailyNoteText(e.target.value)}
-              placeholder="Inserisci i dettagli di oggi..."
-            />
           </div>
 
           <div style={{ marginTop: '20px', marginBottom: '10px' }}>
@@ -525,26 +595,13 @@ export default function Home() {
             })}
           </div>
 
-          <button onClick={handleSaveAttendanceAndNotes} style={{ ...styles.btnPrimary, marginTop: '20px', width: '100%' }}>
-            Salva Appello & Note del Giorno
+          <button onClick={handleSaveAttendance} style={{ ...styles.btnPrimary, marginTop: '20px', width: '100%' }}>
+            Salva Appello Presenze
           </button>
-
-          <div style={{ marginTop: '40px' }}>
-            <h4>Note Recenti Allenamenti</h4>
-            {dailyNotes.map(note => (
-              <div key={note.id} style={styles.noteCard}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <strong>📅 {note.date} - Gruppo {note.category}</strong>
-                  <span style={{ fontSize: '12px', color: '#64748b' }}>Coach: {note.author_name}</span>
-                </div>
-                <p style={{ margin: '8px 0 0 0', color: '#334155' }}>{note.content}</p>
-              </div>
-            ))}
-          </div>
         </main>
       )}
 
-      {/* VISTA 3: SCHEDE ATLETI & GRAFICI A TORTA */}
+      {/* TAB 4: SCHEDE & GRAFICI */}
       {activeTab === 'stats' && (
         <main style={styles.mainContent}>
           <h3>Schede Atleti & Statistiche</h3>
@@ -571,9 +628,9 @@ export default function Home() {
             const totalPresences = athleteLogs.length;
 
             const gsCount = athleteLogs.filter(l => l.specialty === 'Gigante').length;
-            const slCount = athleteLogs.filter(l => l.specialty === 'Special').length;
+            const slCount = athleteLogs.filter(l => l.specialty === 'Slalom' || l.specialty === 'Special').length;
             const sgCount = athleteLogs.filter(l => l.specialty === 'SuperG').length;
-            const clCount = athleteLogs.filter(l => l.specialty === 'Campo Libero').length;
+            const clCount = athleteLogs.filter(l => ['Campo Libero', 'Esercizi', 'Neve Fresca'].includes(l.specialty)).length;
 
             const gsDeg = totalPresences ? (gsCount / totalPresences) * 360 : 0;
             const slDeg = totalPresences ? (slCount / totalPresences) * 360 : 0;
@@ -599,9 +656,9 @@ export default function Home() {
 
                   <div style={styles.legendList}>
                     <div><span style={{ ...styles.legendDot, backgroundColor: '#2563eb' }} /> Gigante: {gsCount} ({totalPresences ? Math.round((gsCount/totalPresences)*100) : 0}%)</div>
-                    <div><span style={{ ...styles.legendDot, backgroundColor: '#0284c7' }} /> Speciale: {slCount} ({totalPresences ? Math.round((slCount/totalPresences)*100) : 0}%)</div>
+                    <div><span style={{ ...styles.legendDot, backgroundColor: '#0284c7' }} /> Slalom: {slCount} ({totalPresences ? Math.round((slCount/totalPresences)*100) : 0}%)</div>
                     <div><span style={{ ...styles.legendDot, backgroundColor: '#059669' }} /> SuperG: {sgCount} ({totalPresences ? Math.round((sgCount/totalPresences)*100) : 0}%)</div>
-                    <div><span style={{ ...styles.legendDot, backgroundColor: '#d97706' }} /> Campo Libero: {clCount} ({totalPresences ? Math.round((clCount/totalPresences)*100) : 0}%)</div>
+                    <div><span style={{ ...styles.legendDot, backgroundColor: '#d97706' }} /> Altro / Libero: {clCount} ({totalPresences ? Math.round((clCount/totalPresences)*100) : 0}%)</div>
                   </div>
                 </div>
               </div>
@@ -610,7 +667,7 @@ export default function Home() {
         </main>
       )}
 
-      {/* VISTA 4: ATLETI & STAFF */}
+      {/* TAB 5: ISCRITTI */}
       {activeTab === 'members' && (
         <main style={styles.mainContent}>
           <h3>Elenco Iscritti Sci Club</h3>
@@ -640,7 +697,97 @@ export default function Home() {
         </main>
       )}
 
-      {/* MODALE CARICAMENTO VIDEO */}
+      {/* BOTTOM NAVIGATION BAR MOBILE (FISSA IN BASSO PER SMARTPHONE) */}
+      <nav style={styles.bottomBarMobile}>
+        <button style={activeTab === 'videos' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('videos')}>
+          <span>📹</span>
+          <span style={styles.bottomTabLabel}>Video</span>
+        </button>
+
+        {currentUser.role !== 'athlete' && (
+          <>
+            <button style={activeTab === 'activities' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('activities')}>
+              <span>📅</span>
+              <span style={styles.bottomTabLabel}>Attività</span>
+            </button>
+            <button style={activeTab === 'presence' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('presence')}>
+              <span>📋</span>
+              <span style={styles.bottomTabLabel}>Presenze</span>
+            </button>
+          </>
+        )}
+
+        <button style={activeTab === 'stats' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('stats')}>
+          <span>📊</span>
+          <span style={styles.bottomTabLabel}>Schede</span>
+        </button>
+
+        {currentUser.role !== 'athlete' && (
+          <button style={activeTab === 'members' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('members')}>
+            <span>👥</span>
+            <span style={styles.bottomTabLabel}>Iscritti</span>
+          </button>
+        )}
+      </nav>
+
+      {/* MODALE NUOVA ATTIVITÀ */}
+      {showActivityModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCard}>
+            <h3 style={styles.modalTitle}>Crea Nuova Attività</h3>
+            <form onSubmit={handleCreateActivity} style={styles.form}>
+              <label style={styles.label}>Tipo Evento</label>
+              <select style={styles.input} value={actType} onChange={(e) => setActType(e.target.value)}>
+                <option value="Allenamento">Allenamento</option>
+                <option value="Gara">Gara</option>
+                <option value="Stage">Stage</option>
+                <option value="Trasferta">Trasferta</option>
+              </select>
+
+              <label style={styles.label}>Specialità / Disciplina</label>
+              <select style={styles.input} value={actSpecialty} onChange={(e) => setActSpecialty(e.target.value)}>
+                <option value="Gigante">Gigante</option>
+                <option value="Slalom">Slalom</option>
+                <option value="SuperG">SuperG</option>
+                <option value="Campo Libero">Campo Libero</option>
+                <option value="Esercizi">Esercizi</option>
+                <option value="Neve Fresca">Neve Fresca</option>
+              </select>
+
+              <label style={styles.label}>Categoria Destinataria</label>
+              <select style={styles.input} value={actCategory} onChange={(e) => setActCategory(e.target.value)}>
+                <option value="Tutti">Tutte le Categorie</option>
+                <option value="Superbaby">Superbaby</option>
+                <option value="Baby">Baby</option>
+                <option value="Cuccioli">Cuccioli</option>
+                <option value="Ragazzi">Ragazzi</option>
+                <option value="Allievi">Allievi</option>
+                <option value="Giovani">Giovani</option>
+                <option value="Senior">Senior</option>
+                <option value="Master">Master</option>
+              </select>
+
+              <label style={styles.label}>Data</label>
+              <input type="date" style={styles.input} value={actDate} onChange={(e) => setActDate(e.target.value)} required />
+
+              <label style={styles.label}>Note (Opzionale)</label>
+              <textarea
+                style={styles.textArea}
+                value={actNotes}
+                onChange={(e) => setActNotes(e.target.value)}
+                placeholder="Dettagli tracciato, orario ritrovo o programma..."
+              />
+
+              <div style={styles.modalActions}>
+                <button type="submit" style={styles.btnPrimary}>Crea Attività</button>
+                <button type="button" onClick={() => setShowActivityModal(false)} style={styles.btnCancel}>Annulla</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODALE UPLOAD VIDEO */}
       {showUploadModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCard}>
@@ -659,10 +806,12 @@ export default function Home() {
 
               <label style={styles.label}>Specialità</label>
               <select style={styles.input} value={videoSpecialty} onChange={(e) => setVideoSpecialty(e.target.value)}>
-                <option value="Gigante">Gigante (GS)</option>
-                <option value="Special">Special (SL)</option>
-                <option value="SuperG">SuperG (SG)</option>
+                <option value="Gigante">Gigante</option>
+                <option value="Slalom">Slalom</option>
+                <option value="SuperG">SuperG</option>
                 <option value="Campo Libero">Campo Libero</option>
+                <option value="Esercizi">Esercizi</option>
+                <option value="Neve Fresca">Neve Fresca</option>
               </select>
 
               <label style={styles.label}>Data</label>
@@ -685,7 +834,7 @@ export default function Home() {
   );
 }
 
-// DEFINIZIONE STILI CSS-IN-JS (TEMA CHIARO & BLU SCURO)
+// STILI CON SUPPORTO DESKTOP & MOBILE BOTTOM BAR
 const styles = {
   loginContainer: { minHeight: '100vh', backgroundColor: '#f8fafc', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' },
   loginCard: { backgroundColor: '#ffffff', padding: '32px', borderRadius: '16px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', color: '#0f172a', border: '1px solid #e2e8f0' },
@@ -701,15 +850,56 @@ const styles = {
   btnCancel: { padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: '#94a3b8', color: '#ffffff', cursor: 'pointer' },
   errorText: { color: '#ef4444', fontSize: '13px', margin: '4px 0' },
 
-  dashboardContainer: { minHeight: '100vh', backgroundColor: '#ffffff', color: '#0f172a', fontFamily: 'sans-serif' },
+  dashboardContainer: { minHeight: '100vh', backgroundColor: '#ffffff', color: '#0f172a', fontFamily: 'sans-serif', paddingBottom: '70px' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', backgroundColor: '#0f172a', color: '#ffffff' },
   headerTitle: { margin: 0, fontSize: '20px', color: '#ffffff' },
   headerUser: { margin: 0, fontSize: '12px', color: '#94a3b8' },
   btnLogout: { backgroundColor: '#ef4444', border: 'none', color: '#ffffff', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer' },
 
-  tabBar: { display: 'flex', gap: '10px', padding: '12px 24px', backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0' },
+  tabBarDesktop: { display: 'flex', gap: '10px', padding: '12px 24px', backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0' },
   tab: { padding: '10px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#ffffff', color: '#475569', cursor: 'pointer', fontWeight: '600', border: '1px solid #e2e8f0' },
   tabActive: { padding: '10px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#1e3a8a', color: '#ffffff', fontWeight: 'bold', cursor: 'pointer' },
+
+  // BARRA DI NAVIGAZIONE FISSA IN BASSO PER TELEFONI
+  bottomBarMobile: {
+    position: 'fixed',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#ffffff',
+    display: 'flex',
+    justify: 'space-around',
+    alignItems: 'center',
+    padding: '8px 0',
+    borderTop: '1px solid #e2e8f0',
+    boxShadow: '0 -2px 10px rgba(0,0,0,0.05)',
+    zIndex: 999
+  },
+  bottomTab: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    background: 'none',
+    border: 'none',
+    color: '#64748b',
+    fontSize: '18px',
+    cursor: 'pointer'
+  },
+  bottomTabActive: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    background: 'none',
+    border: 'none',
+    color: '#1e3a8a',
+    fontWeight: 'bold',
+    fontSize: '18px',
+    cursor: 'pointer'
+  },
+  bottomTabLabel: {
+    fontSize: '10px',
+    marginTop: '2px'
+  },
 
   mainContent: { padding: '24px', maxWidth: '1200px', margin: '0 auto' },
   sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
@@ -737,7 +927,7 @@ const styles = {
   readOnlyTag: { fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' },
 
   emptyState: { textAlign: 'center', padding: '40px', color: '#94a3b8' },
-  noteCard: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px', marginTop: '10px' },
+  noteCard: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '16px', marginTop: '12px' },
 
   statsCard: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px', marginTop: '16px' },
   statsLayout: { display: 'flex', gap: '40px', alignItems: 'center', marginTop: '20px', flexWrap: 'wrap' },
