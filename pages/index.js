@@ -246,7 +246,21 @@ export default function Home() {
     }
   };
 
-  // 7. SALVA PRESENZE ATTIVITÀ
+  // 7. CANCELLAZIONE MEMBRO/ISCRITTO (SUPER ADMIN / ADMIN)
+  const handleDeleteMember = async (memberId) => {
+    if (!confirm('Sei sicuro di voler eliminare questo iscritto?')) return;
+    if (!supabase) return;
+
+    const { error } = await supabase.from('club_members').delete().eq('id', memberId);
+    if (error) {
+      alert(`Errore eliminazione iscritto: ${error.message}`);
+    } else {
+      setMembers(members.filter(m => m.id !== memberId));
+      alert('Iscritto eliminato con successo.');
+    }
+  };
+
+  // 8. SALVA PRESENZE ATTIVITÀ
   const handleSaveAttendance = async () => {
     if (!supabase || !selectedActivityId) {
       alert('Seleziona prima un\'attività dal banner o dal menu a tendina!');
@@ -284,7 +298,7 @@ export default function Home() {
     }
   };
 
-  // 8. UPLOAD VIDEO SU CLOUDFLARE R2
+  // 9. UPLOAD VIDEO SU CLOUDFLARE R2
   const handleUploadToCloudflare = async (e) => {
     e.preventDefault();
     if (!selectedRawFile) return;
@@ -780,9 +794,14 @@ export default function Home() {
                 <div>
                   <strong>{m.name}</strong> — <span style={{ color: '#64748b' }}>{m.email}</span>
                 </div>
-                <span style={styles.roleBadge}>
-                  {m.role.toUpperCase()} ({m.role === 'coach' ? `Gruppo ${m.coach_group || 'Grandi'}` : m.category})
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={styles.roleBadge}>
+                    {m.role.toUpperCase()} ({m.role === 'coach' ? `Gruppo ${m.coach_group || 'Grandi'}` : m.category})
+                  </span>
+                  {(currentUser.role === 'admin' || currentUser.role === 'superadmin') && (
+                    <button onClick={() => handleDeleteMember(m.id)} style={styles.btnDeleteInline}>🗑️ Elimina</button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
