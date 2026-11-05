@@ -86,11 +86,13 @@ export default function Home() {
     return false;
   };
 
-  // CARICAMENTO TUTTI I LOG DA SUPABASE
+  // RICARICA I LOG DI PRESENZA DA SUPABASE
   const reloadAttendanceLogs = async () => {
     if (!supabase) return;
-    const { data: attData } = await supabase.from('attendance_history').select('*');
-    if (attData) setAttendanceLogs(attData);
+    const { data: attData, error } = await supabase.from('attendance_history').select('*');
+    if (!error && attData) {
+      setAttendanceLogs(attData);
+    }
   };
 
   // 1. CARICAMENTO DATI E SESSIONE
@@ -299,7 +301,7 @@ export default function Home() {
     }
   };
 
-  // 6. SALVA / AGGIORNA PRESENZE PER UN'ATTIVITÀ CON RICARICAMENTO GRAFICI
+  // 6. SALVA / AGGIORNA PRESENZE PER UN'ATTIVITÀ (CON GESTIONE ERRORE DIRETTAMENTE DA DB)
   const saveAttendanceForActivity = async (actObject, currentAttendanceState) => {
     if (!supabase || !actObject) return;
 
@@ -315,15 +317,16 @@ export default function Home() {
     });
 
     try {
-      // 1. Rimuovi i log precedenti per questa data ed evento
-      await supabase.from('attendance_history').delete().eq('date', actObject.date);
+      // Rimuovi i log precedenti di questa data
+      const { error: delError } = await supabase.from('attendance_history').delete().eq('date', actObject.date);
+      if (delError) console.warn('Note eliminazione pregressa:', delError.message);
 
-      // 2. Prepara le nuove registrazioni (Presenti e Assenti)
+      // Inserisci i nuovi log (presenti e assenti)
       const newEntries = targetAthletes.map(athlete => {
         const isPresent = !!currentAttendanceState[athlete.id];
         return {
           date: actObject.date,
-          athlete_id: athlete.id,
+          athlete_id: String(athlete.id),
           specialty: specialtyName,
           status: isPresent ? 'present' : 'absent',
           event_type: actTypeTag
@@ -331,15 +334,14 @@ export default function Home() {
       });
 
       if (newEntries.length > 0) {
-        await supabase.from('attendance_history').insert(newEntries);
+        const { error: insError } = await supabase.from('attendance_history').insert(newEntries);
+        if (insError) throw insError;
       }
 
-      // 3. Ricarica completamente i dati dei log per aggiornare i grafici all'istante
       await reloadAttendanceLogs();
-
-      alert('Presenze aggiornate con successo e grafico ricalcolato!');
+      alert('Presenze salvate e grafici aggiornati con successo!');
     } catch (err) {
-      alert(`Errore nel salvataggio presenze: ${err.message}`);
+      alert(`Impossibile salvare le presenze: ${err.message}. Hai eseguito lo script SQL di aggiornamento su Supabase?`);
     }
   };
 
@@ -797,7 +799,7 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 4: SCHEDE & GRAFICI (PRESENZE, ASSENZE E GARE RICALCOLATE DINAMICAMENTE) */}
+      {/* TAB 4: SCHEDE & GRAFICI */}
       {activeTab === 'stats' && (
         <main style={styles.mainContent}>
           <h3>Schede Atleti & Statistiche Stagionali</h3>
@@ -1153,7 +1155,7 @@ const styles = {
     right: 0,
     backgroundColor: '#ffffff',
     display: 'flex',
-    justifyContent: 'space-around',
+    justify: 'space-around',
     alignItems: 'center',
     padding: '8px 0',
     borderTop: '1px solid #e2e8f0',
