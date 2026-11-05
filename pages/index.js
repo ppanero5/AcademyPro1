@@ -260,18 +260,25 @@ export default function Home() {
     }
   };
 
-  // 5. ELIMINAZIONI
+  // 5. ELIMINAZIONI (CON CANCELLAZIONE LOG PRESENZE COLLEGATI)
   const handleDeleteActivity = async (actId) => {
-    if (!confirm('Sei sicuro di voler eliminare questa attività?')) return;
+    if (!confirm('Sei sicuro di voler eliminare questa attività e le sue presenze?')) return;
     if (!supabase) return;
 
+    const actIdStr = String(actId);
+
+    // 1. Elimina le presenze collegate a questa attività
+    await supabase.from('attendance_history').delete().eq('activity_id', actIdStr);
+
+    // 2. Elimina l'attività stessa
     const { error } = await supabase.from('daily_notes').delete().eq('id', actId);
     if (error) {
       alert(`Errore eliminazione attività: ${error.message}`);
     } else {
       setActivities(activities.filter(a => a.id !== actId));
-      if (String(selectedActivityId) === String(actId)) setSelectedActivityId('');
-      alert('Attività eliminata con successo.');
+      if (String(selectedActivityId) === actIdStr) setSelectedActivityId('');
+      await reloadAttendanceLogs();
+      alert('Attività e presenze collegate eliminate con successo.');
     }
   };
 
@@ -318,7 +325,7 @@ export default function Home() {
     });
 
     try {
-      // 1. Rimuovi i log precedenti SOLO per questa specifica attività
+      // 1. Rimuovi i log precedenti per la specifica attività
       const { error: delError } = await supabase
         .from('attendance_history')
         .delete()
@@ -652,7 +659,7 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 2: ATTIVITÀ & NOTE (CON TASTO MODIFICA PRESENZE) */}
+      {/* TAB 2: ATTIVITÀ & NOTE */}
       {activeTab === 'activities' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
@@ -808,7 +815,7 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 4: SCHEDE & GRAFICI */}
+      {/* TAB 4: SCHEDE & GRAFICI (FILTRA SOLO ATTIVITÀ ESISTENTI) */}
       {activeTab === 'stats' && (
         <main style={styles.mainContent}>
           <h3>Schede Atleti & Statistiche Stagionali</h3>
@@ -831,7 +838,15 @@ export default function Home() {
           </div>
 
           {selectedAthleteForStats && (() => {
-            const athleteLogs = attendanceLogs.filter(l => String(l.athlete_id) === String(selectedAthleteForStats.id));
+            // Elenco degli ID delle attività ancora esistenti
+            const existingActivityIds = new Set(activities.map(a => String(a.id)));
+
+            // Filtra solo i log legati ad attività NON eliminate
+            const athleteLogs = attendanceLogs.filter(l => {
+              if (String(l.athlete_id) !== String(selectedAthleteForStats.id)) return false;
+              if (l.activity_id && !existingActivityIds.has(String(l.activity_id))) return false;
+              return true;
+            });
             
             const presentLogs = athleteLogs.filter(l => l.status === 'present');
             const totalPresences = presentLogs.length;
