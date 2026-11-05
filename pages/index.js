@@ -86,13 +86,11 @@ export default function Home() {
     return false;
   };
 
-  // RICARICA I LOG DI PRESENZA DA SUPABASE
+  // RICARICA LOG PRESENZE
   const reloadAttendanceLogs = async () => {
     if (!supabase) return;
     const { data: attData, error } = await supabase.from('attendance_history').select('*');
-    if (!error && attData) {
-      setAttendanceLogs(attData);
-    }
+    if (!error && attData) setAttendanceLogs(attData);
   };
 
   // 1. CARICAMENTO DATI E SESSIONE
@@ -124,7 +122,7 @@ export default function Home() {
     fetchData();
   }, []);
 
-  // SELEZIONE AUTOMATICA ATTIVITÀ DI OGGI
+  // SELEZIONE AUTOMATICA ATTIVITÀ DI OGGI SE PRESENTE
   useEffect(() => {
     const todayStr = new Date().toISOString().split('T')[0];
     const todayAct = activities.find(a => a.date === todayStr && isActivityVisibleForUser(a));
@@ -133,7 +131,7 @@ export default function Home() {
     }
   }, [activities, currentUser]);
 
-  // AL CAMBIO ATTIVITÀ SELEZIONATA, CARICA LE PRESENZE GIÀ SALVATE
+  // AL CAMBIO ATTIVITÀ SELEZIONATA, CARICA LE PRESENZE DI QUELLA SPECIFICA ATTIVITÀ
   useEffect(() => {
     if (!selectedActivityId) {
       setAttendance({});
@@ -142,7 +140,9 @@ export default function Home() {
     const act = activities.find(a => String(a.id) === String(selectedActivityId));
     if (!act) return;
 
-    const existingLogs = attendanceLogs.filter(l => l.date === act.date);
+    const existingLogs = attendanceLogs.filter(
+      l => l.date === act.date && String(l.activity_id) === String(act.id)
+    );
     const newAttState = {};
     existingLogs.forEach(log => {
       newAttState[log.athlete_id] = log.status === 'present';
@@ -301,7 +301,7 @@ export default function Home() {
     }
   };
 
-  // 6. SALVA / AGGIORNA PRESENZE PER UN'ATTIVITÀ (CON GESTIONE ERRORE DIRETTAMENTE DA DB)
+  // 6. SALVA / AGGIORNA PRESENZE PER SINGOLA ATTIVITÀ
   const saveAttendanceForActivity = async (actObject, currentAttendanceState) => {
     if (!supabase || !actObject) return;
 
@@ -309,6 +309,7 @@ export default function Home() {
     const actTypeTag = parts[0] ? parts[0].trim() : 'Allenamento';
     const specialtyName = parts[1] ? parts[1].trim() : 'Generale';
     const targetCat = parts[2] ? parts[2].trim() : 'Tutti';
+    const actIdStr = String(actObject.id);
 
     const targetAthletes = members.filter(m => {
       if (m.role !== 'athlete') return false;
@@ -317,11 +318,16 @@ export default function Home() {
     });
 
     try {
-      // Rimuovi i log precedenti di questa data
-      const { error: delError } = await supabase.from('attendance_history').delete().eq('date', actObject.date);
+      // 1. Rimuovi i log precedenti SOLO per questa specifica attività
+      const { error: delError } = await supabase
+        .from('attendance_history')
+        .delete()
+        .eq('date', actObject.date)
+        .eq('activity_id', actIdStr);
+
       if (delError) console.warn('Note eliminazione pregressa:', delError.message);
 
-      // Inserisci i nuovi log (presenti e assenti)
+      // 2. Prepara i nuovi log legati all'activity_id
       const newEntries = targetAthletes.map(athlete => {
         const isPresent = !!currentAttendanceState[athlete.id];
         return {
@@ -329,7 +335,8 @@ export default function Home() {
           athlete_id: String(athlete.id),
           specialty: specialtyName,
           status: isPresent ? 'present' : 'absent',
-          event_type: actTypeTag
+          event_type: actTypeTag,
+          activity_id: actIdStr
         };
       });
 
@@ -341,7 +348,7 @@ export default function Home() {
       await reloadAttendanceLogs();
       alert('Presenze salvate e grafici aggiornati con successo!');
     } catch (err) {
-      alert(`Impossibile salvare le presenze: ${err.message}. Hai eseguito lo script SQL di aggiornamento su Supabase?`);
+      alert(`Impossibile salvare le presenze: ${err.message}`);
     }
   };
 
@@ -357,7 +364,9 @@ export default function Home() {
   // APERTURA MODALE MODIFICA PRESENZE DA SCHEDA ATTIVITÀ
   const openEditAttendanceModal = (act) => {
     setEditingActivity(act);
-    const existingLogs = attendanceLogs.filter(l => l.date === act.date);
+    const existingLogs = attendanceLogs.filter(
+      l => l.date === act.date && String(l.activity_id) === String(act.id)
+    );
     const initialMap = {};
     existingLogs.forEach(log => {
       initialMap[log.athlete_id] = log.status === 'present';
@@ -675,7 +684,7 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 3: PRESENZE (QUADRATINI DA FLAGGARE) */}
+      {/* TAB 3: PRESENZE */}
       {activeTab === 'presence' && (
         <main style={styles.mainContent}>
           <h3>Registro Appello Presenze ({currentUser.coach_group || 'Generale'})</h3>
@@ -746,7 +755,7 @@ export default function Home() {
             />
           </div>
 
-          {/* LISTA ATLETI CON QUADRATINI CHECKBOX INTERATTIVI */}
+          {/* LISTA ATLETI CON CHECKBOX INTERATTIVI */}
           <div style={styles.membersList}>
             {filteredMembers.length === 0 ? (
               <div style={styles.emptyState}>
