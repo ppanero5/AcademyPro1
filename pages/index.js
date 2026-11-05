@@ -44,6 +44,10 @@ export default function Home() {
   const [showRegModal, setShowRegModal] = useState(false);
   const [selectedAthleteForStats, setSelectedAthleteForStats] = useState(null);
 
+  // --- MODALE MODIFICA PRESENZE DA ATTIVITÀ ---
+  const [editingActivity, setEditingActivity] = useState(null);
+  const [modalAttendance, setModalAttendance] = useState({});
+
   // --- FORM NUOVA ATTIVITÀ ---
   const [actType, setActType] = useState('Allenamento');
   const [actSpecialty, setActSpecialty] = useState('Gigante');
@@ -82,15 +86,14 @@ export default function Home() {
     return false;
   };
 
-  // 1. RIPRISTINO SESSIONE DI LOGIN E CARICAMENTO DATI SUPABASE
+  // 1. CARICAMENTO DATI E SESSIONE
   useEffect(() => {
-    // Ripristina la sessione dell'utente dal localStorage se presente
     const savedUser = localStorage.getItem('skiclub_user');
     if (savedUser) {
       try {
         setCurrentUser(JSON.parse(savedUser));
       } catch (e) {
-        console.error('Errore nel caricamento della sessione salvata:', e);
+        console.error('Errore ripristino sessione:', e);
       }
     }
 
@@ -113,7 +116,7 @@ export default function Home() {
     fetchData();
   }, []);
 
-  // SELEZIONE AUTOMATICA ATTIVITÀ DI OGGI SE PRESENTE
+  // SELEZIONE AUTOMATICA ATTIVITÀ DI OGGI
   useEffect(() => {
     const todayStr = new Date().toISOString().split('T')[0];
     const todayAct = activities.find(a => a.date === todayStr && isActivityVisibleForUser(a));
@@ -121,6 +124,23 @@ export default function Home() {
       setSelectedActivityId(String(todayAct.id));
     }
   }, [activities, currentUser]);
+
+  // AL CAMBIO ATTIVITÀ SELEZIONATA, CARICA LE PRESENZE GIÀ SALVATE
+  useEffect(() => {
+    if (!selectedActivityId) {
+      setAttendance({});
+      return;
+    }
+    const act = activities.find(a => String(a.id) === String(selectedActivityId));
+    if (!act) return;
+
+    const existingLogs = attendanceLogs.filter(l => l.date === act.date);
+    const newAttState = {};
+    existingLogs.forEach(log => {
+      newAttState[log.athlete_id] = log.status === 'present';
+    });
+    setAttendance(newAttState);
+  }, [selectedActivityId, attendanceLogs, activities]);
 
   // HELPER VISIBILITÀ ATTIVITÀ PER IL COACH
   const isActivityVisibleForUser = (act) => {
@@ -139,7 +159,7 @@ export default function Home() {
     return true;
   };
 
-  // 2. LOGIN (CON SALVATAGGIO IN LOCALSTORAGE)
+  // 2. LOGIN
   const handleLogin = async (e) => {
     e.preventDefault();
     setAuthError('');
@@ -170,7 +190,6 @@ export default function Home() {
     }
   };
 
-  // LOGOUT (PULIZIA LOCALSTORAGE)
   const handleLogout = () => {
     setCurrentUser(null);
     localStorage.removeItem('skiclub_user');
@@ -204,7 +223,7 @@ export default function Home() {
     }
   };
 
-  // 4. NUOVA ATTIVITÀ CON CATEGORIA
+  // 4. NUOVA ATTIVITÀ
   const handleCreateActivity = async (e) => {
     e.preventDefault();
     if (!supabase) return;
@@ -233,7 +252,7 @@ export default function Home() {
     }
   };
 
-  // 5. CANCELLAZIONE ATTIVITÀ
+  // 5. ELIMINAZIONI
   const handleDeleteActivity = async (actId) => {
     if (!confirm('Sei sicuro di voler eliminare questa attività?')) return;
     if (!supabase) return;
@@ -243,14 +262,11 @@ export default function Home() {
       alert(`Errore eliminazione attività: ${error.message}`);
     } else {
       setActivities(activities.filter(a => a.id !== actId));
-      if (String(selectedActivityId) === String(actId)) {
-        setSelectedActivityId('');
-      }
+      if (String(selectedActivityId) === String(actId)) setSelectedActivityId('');
       alert('Attività eliminata con successo.');
     }
   };
 
-  // 6. CANCELLAZIONE VIDEO
   const handleDeleteVideo = async (videoId) => {
     if (!confirm('Sei sicuro di voler eliminare questo video?')) return;
     if (!supabase) return;
@@ -264,7 +280,6 @@ export default function Home() {
     }
   };
 
-  // 7. CANCELLAZIONE MEMBRO/ISCRITTO (SUPER ADMIN / ADMIN)
   const handleDeleteMember = async (memberId) => {
     if (!confirm('Sei sicuro di voler eliminare questo iscritto?')) return;
     if (!supabase) return;
@@ -278,45 +293,78 @@ export default function Home() {
     }
   };
 
-  // 8. SALVA PRESENZE ATTIVITÀ
-  const handleSaveAttendance = async () => {
-    if (!supabase || !selectedActivityId) {
-      alert('Seleziona prima un\'attività dal banner o dal menu a tendina!');
-      return;
-    }
+  // 6. SALVA / AGGIORNA PRESENZE PER UN'ATTIVITÀ
+  const saveAttendanceForActivity = async (actObject, currentAttendanceState) => {
+    if (!supabase || !actObject) return;
 
-    const selectedAct = activities.find(a => String(a.id) === String(selectedActivityId));
-    if (!selectedAct) return;
-
-    const parts = selectedAct.category.split('|');
+    const parts = actObject.category.split('|');
+    const actTypeTag = parts[0] ? parts[0].trim() : 'Allenamento';
     const specialtyName = parts[1] ? parts[1].trim() : 'Generale';
+    const targetCat = parts[2] ? parts[2].trim() : 'Tutti';
+
+    const targetAthletes = members.filter(m => {
+      if (m.role !== 'athlete') return false;
+      if (targetCat !== 'Tutti' && targetCat !== '' && m.category !== targetCat) return false;
+      return true;
+    });
 
     try {
-      const newEntries = [];
-      Object.keys(attendance).forEach(athleteId => {
-        if (attendance[athleteId]) {
-          newEntries.push({
-            date: selectedAct.date,
-            athlete_id: athleteId,
-            specialty: specialtyName,
-            status: 'present'
-          });
-        }
+      // 1. Rimuovi i log precedenti per questa data ed evento
+      await supabase.from('attendance_history').delete().eq('date', actObject.date);
+
+      // 2. Prepara le nuove registrazioni (Presenti e Assenti)
+      const newEntries = targetAthletes.map(athlete => {
+        const isPresent = !!currentAttendanceState[athlete.id];
+        return {
+          date: actObject.date,
+          athlete_id: athlete.id,
+          specialty: specialtyName,
+          status: isPresent ? 'present' : 'absent',
+          event_type: actTypeTag
+        };
       });
 
       if (newEntries.length > 0) {
         const { data: aData } = await supabase.from('attendance_history').insert(newEntries).select();
-        if (aData) setAttendanceLogs([...attendanceLogs, ...aData]);
+        if (aData) {
+          const updatedLogs = attendanceLogs.filter(l => l.date !== actObject.date);
+          setAttendanceLogs([...updatedLogs, ...aData]);
+        }
       }
 
-      alert('Presenze salvate con successo per l\'attività!');
-      setAttendance({});
+      alert('Presenze aggiornate con successo!');
     } catch (err) {
       alert(`Errore nel salvataggio presenze: ${err.message}`);
     }
   };
 
-  // 9. UPLOAD VIDEO SU CLOUDFLARE R2
+  const handleSaveAttendance = () => {
+    const selectedAct = activities.find(a => String(a.id) === String(selectedActivityId));
+    if (!selectedAct) {
+      alert('Seleziona prima un\'attività dal banner o dal menu a tendina!');
+      return;
+    }
+    saveAttendanceForActivity(selectedAct, attendance);
+  };
+
+  // APERTURA MODALE MODIFICA PRESENZE DA SCHEDA ATTIVITÀ
+  const openEditAttendanceModal = (act) => {
+    setEditingActivity(act);
+    const existingLogs = attendanceLogs.filter(l => l.date === act.date);
+    const initialMap = {};
+    existingLogs.forEach(log => {
+      initialMap[log.athlete_id] = log.status === 'present';
+    });
+    setModalAttendance(initialMap);
+  };
+
+  const handleSaveModalAttendance = async () => {
+    if (!editingActivity) return;
+    await saveAttendanceForActivity(editingActivity, modalAttendance);
+    setEditingActivity(null);
+  };
+
+  // 7. UPLOAD VIDEO SU CLOUDFLARE R2
   const handleUploadToCloudflare = async (e) => {
     e.preventDefault();
     if (!selectedRawFile) return;
@@ -377,18 +425,15 @@ export default function Home() {
     }
   };
 
-  // ESTRAZIONE ATTIVITÀ SELEZIONATA PER FILTRARE LA CATEGORIA DEGLI ATLETI
+  // FILTRA ATLETI PER CATEGORIA ATTIVITÀ
   const selectedActivityObject = activities.find(a => String(a.id) === String(selectedActivityId));
   const selectedActivityCategoryTarget = selectedActivityObject ? selectedActivityObject.category.split('|')[2]?.trim() || 'Tutti' : 'Tutti';
 
-  // ATLETI FILTRATI ESCLUSIVAMENTE PER LA CATEGORIA DELL'ATTIVITÀ E PER LA BARRA DI RICERCA
   const filteredMembers = members.filter(m => {
     if (m.role !== 'athlete') return false;
-    
     if (selectedActivityCategoryTarget !== 'Tutti' && selectedActivityCategoryTarget !== '') {
       if (m.category !== selectedActivityCategoryTarget) return false;
     }
-
     const matchesSearch = m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.email.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesSearch;
   });
@@ -591,7 +636,7 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 2: ATTIVITÀ & NOTE */}
+      {/* TAB 2: ATTIVITÀ & NOTE (CON TASTO MODIFICA PRESENZE) */}
       {activeTab === 'activities' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
@@ -605,14 +650,17 @@ export default function Home() {
             ) : (
               groupVisibleActivities.map(act => (
                 <div key={act.id} style={styles.noteCard}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                     <strong>📅 {act.date} — {act.category}</strong>
-                    <div>
-                      <span style={{ fontSize: '12px', color: '#64748b', marginRight: '10px' }}>Coach: {act.author_name}</span>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <button onClick={() => openEditAttendanceModal(act)} style={styles.btnEditPresence}>
+                        📋 Gestisci / Modifica Presenze
+                      </button>
                       <button onClick={() => handleDeleteActivity(act.id)} style={styles.btnDeleteInline}>🗑️ Elimina</button>
                     </div>
                   </div>
                   <p style={{ margin: '8px 0', color: '#334155', whiteSpace: 'pre-wrap' }}>{act.content}</p>
+                  <span style={{ fontSize: '11px', color: '#94a3b8' }}>Creato da: {act.author_name}</span>
                 </div>
               ))
             )}
@@ -620,7 +668,7 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 3: PRESENZE */}
+      {/* TAB 3: PRESENZE (QUADRATINI DA FLAGGARE) */}
       {activeTab === 'presence' && (
         <main style={styles.mainContent}>
           <h3>Registro Appello Presenze ({currentUser.coach_group || 'Generale'})</h3>
@@ -691,7 +739,7 @@ export default function Home() {
             />
           </div>
 
-          {/* LISTA ATLETI MOSTRANDO SOLO QUELLI DELLA CATEGORIA SELEZIONATA */}
+          {/* LISTA ATLETI CON QUADRATINI CHECKBOX INTERATTIVI */}
           <div style={styles.membersList}>
             {filteredMembers.length === 0 ? (
               <div style={styles.emptyState}>
@@ -700,19 +748,38 @@ export default function Home() {
             ) : (
               filteredMembers.map(athlete => {
                 const editable = canEditCategory(athlete.category);
+                const isChecked = !!attendance[athlete.id];
+
                 return (
-                  <div key={athlete.id} style={{ ...styles.memberRow, opacity: editable ? 1 : 0.6 }}>
-                    <div>
-                      <strong>{athlete.name}</strong> ({athlete.category})
-                      {!editable && <span style={styles.readOnlyTag}> (Sola Lettura)</span>}
+                  <div
+                    key={athlete.id}
+                    onClick={() => editable && setAttendance({ ...attendance, [athlete.id]: !isChecked })}
+                    style={{
+                      ...styles.memberRow,
+                      cursor: editable ? 'pointer' : 'default',
+                      backgroundColor: isChecked ? '#f0fdf4' : '#f8fafc',
+                      borderColor: isChecked ? '#86efac' : '#e2e8f0',
+                      opacity: editable ? 1 : 0.6
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{
+                        ...styles.checkboxSquare,
+                        backgroundColor: isChecked ? '#16a34a' : '#ffffff',
+                        borderColor: isChecked ? '#16a34a' : '#cbd5e1',
+                        color: '#ffffff'
+                      }}>
+                        {isChecked ? '✓' : ''}
+                      </div>
+                      <div>
+                        <strong style={{ color: isChecked ? '#15803d' : '#0f172a' }}>{athlete.name}</strong> ({athlete.category})
+                        {!editable && <span style={styles.readOnlyTag}> (Sola Lettura)</span>}
+                      </div>
                     </div>
-                    <button
-                      disabled={!editable}
-                      style={attendance[athlete.id] ? styles.btnPresent : styles.btnAbsent}
-                      onClick={() => editable && setAttendance({ ...attendance, [athlete.id]: !attendance[athlete.id] })}
-                    >
-                      {attendance[athlete.id] ? 'PRESENTE ✅' : 'ASSENTE ❌'}
-                    </button>
+
+                    <span style={{ fontSize: '13px', fontWeight: 'bold', color: isChecked ? '#16a34a' : '#94a3b8' }}>
+                      {isChecked ? 'PRESENTE' : 'ASSENTE'}
+                    </span>
                   </div>
                 );
               })
@@ -720,16 +787,16 @@ export default function Home() {
           </div>
 
           <button onClick={handleSaveAttendance} style={{ ...styles.btnPrimary, marginTop: '20px', width: '100%' }}>
-            Conferma Presenze Attività
+            Salva Presenze Attività
           </button>
         </main>
       )}
 
-      {/* TAB 4: SCHEDE & GRAFICI A TORTA */}
+      {/* TAB 4: SCHEDE & GRAFICI (PRESENZE, ASSENZE E GARE) */}
       {activeTab === 'stats' && (
         <main style={styles.mainContent}>
           <h3>Schede Atleti & Statistiche Stagionali</h3>
-          <p style={styles.subTitle}>Seleziona un atleta per visualizzare il resoconto completo delle attività svolte.</p>
+          <p style={styles.subTitle}>Seleziona un atleta per visualizzare il resoconto completo di Presenze, Assenze e Gare.</p>
 
           <div style={{ marginBottom: '20px' }}>
             <select
@@ -749,40 +816,67 @@ export default function Home() {
 
           {selectedAthleteForStats && (() => {
             const athleteLogs = attendanceLogs.filter(l => String(l.athlete_id) === String(selectedAthleteForStats.id));
-            const totalPresences = athleteLogs.length;
+            
+            const presentLogs = athleteLogs.filter(l => l.status === 'present');
+            const totalPresences = presentLogs.length;
 
-            const gsCount = athleteLogs.filter(l => l.specialty === 'Gigante').length;
-            const slCount = athleteLogs.filter(l => l.specialty === 'Slalom' || l.specialty === 'Special').length;
-            const sgCount = athleteLogs.filter(l => l.specialty === 'SuperG').length;
-            const clCount = athleteLogs.filter(l => ['Campo Libero', 'Esercizi', 'Neve Fresca'].includes(l.specialty)).length;
+            const absentLogs = athleteLogs.filter(l => l.status === 'absent');
+            const totalAbsences = absentLogs.length;
 
-            const gsDeg = totalPresences ? (gsCount / totalPresences) * 360 : 0;
-            const slDeg = totalPresences ? (slCount / totalPresences) * 360 : 0;
-            const sgDeg = totalPresences ? (sgCount / totalPresences) * 360 : 0;
+            const raceCount = presentLogs.filter(l => l.event_type === 'Gara').length;
+            const gsCount = presentLogs.filter(l => l.specialty === 'Gigante' && l.event_type !== 'Gara').length;
+            const slCount = presentLogs.filter(l => (l.specialty === 'Slalom' || l.specialty === 'Special') && l.event_type !== 'Gara').length;
+            const sgCount = presentLogs.filter(l => l.specialty === 'SuperG' && l.event_type !== 'Gara').length;
+            const clCount = presentLogs.filter(l => ['Campo Libero', 'Esercizi', 'Neve Fresca'].includes(l.specialty) && l.event_type !== 'Gara').length;
+
+            const grandTotal = totalPresences + totalAbsences;
+
+            const gsDeg = grandTotal ? (gsCount / grandTotal) * 360 : 0;
+            const slDeg = grandTotal ? (slCount / grandTotal) * 360 : 0;
+            const sgDeg = grandTotal ? (sgCount / grandTotal) * 360 : 0;
+            const raceDeg = grandTotal ? (raceCount / grandTotal) * 360 : 0;
+            const clDeg = grandTotal ? (clCount / grandTotal) * 360 : 0;
 
             const pieConic = `conic-gradient(
               #2563eb 0deg ${gsDeg}deg,
               #0284c7 ${gsDeg}deg ${gsDeg + slDeg}deg,
               #059669 ${gsDeg + slDeg}deg ${gsDeg + slDeg + sgDeg}deg,
-              #d97706 ${gsDeg + slDeg + sgDeg}deg 360deg
+              #9333ea ${gsDeg + slDeg + sgDeg}deg ${gsDeg + slDeg + sgDeg + raceDeg}deg,
+              #d97706 ${gsDeg + slDeg + sgDeg + raceDeg}deg ${gsDeg + slDeg + sgDeg + raceDeg + clDeg}deg,
+              #ef4444 ${gsDeg + slDeg + sgDeg + raceDeg + clDeg}deg 360deg
             )`;
 
             return (
               <div style={styles.statsCard}>
                 <h4>{selectedAthleteForStats.name} — Categoria {selectedAthleteForStats.category}</h4>
-                <p>Presenze Totali in Pista: <strong>{totalPresences} giornate</strong></p>
+                <div style={styles.statsSummaryGrid}>
+                  <div style={styles.summaryBox}>
+                    <span style={{ color: '#16a34a', fontSize: '20px', fontWeight: 'bold' }}>{totalPresences}</span>
+                    <span style={{ fontSize: '11px', color: '#64748b' }}>Presenze Totali</span>
+                  </div>
+                  <div style={styles.summaryBox}>
+                    <span style={{ color: '#9333ea', fontSize: '20px', fontWeight: 'bold' }}>{raceCount}</span>
+                    <span style={{ fontSize: '11px', color: '#64748b' }}>Gare Svolte</span>
+                  </div>
+                  <div style={styles.summaryBox}>
+                    <span style={{ color: '#dc2626', fontSize: '20px', fontWeight: 'bold' }}>{totalAbsences}</span>
+                    <span style={{ fontSize: '11px', color: '#64748b' }}>Assenze Registrate</span>
+                  </div>
+                </div>
 
                 <div style={styles.statsLayout}>
                   <div style={{ textAlign: 'center' }}>
-                    <div style={{ ...styles.pieChart, background: totalPresences > 0 ? pieConic : '#e2e8f0' }} />
-                    <p style={{ fontSize: '12px', color: '#64748b', marginTop: '8px' }}>Ripartizione Disciplina</p>
+                    <div style={{ ...styles.pieChart, background: grandTotal > 0 ? pieConic : '#e2e8f0' }} />
+                    <p style={{ fontSize: '12px', color: '#64748b', marginTop: '8px' }}>Presenze, Gare & Assenze</p>
                   </div>
 
                   <div style={styles.legendList}>
-                    <div><span style={{ ...styles.legendDot, backgroundColor: '#2563eb' }} /> Gigante: {gsCount} ({totalPresences ? Math.round((gsCount/totalPresences)*100) : 0}%)</div>
-                    <div><span style={{ ...styles.legendDot, backgroundColor: '#0284c7' }} /> Slalom: {slCount} ({totalPresences ? Math.round((slCount/totalPresences)*100) : 0}%)</div>
-                    <div><span style={{ ...styles.legendDot, backgroundColor: '#059669' }} /> SuperG: {sgCount} ({totalPresences ? Math.round((sgCount/totalPresences)*100) : 0}%)</div>
-                    <div><span style={{ ...styles.legendDot, backgroundColor: '#d97706' }} /> Campo Libero / Altro: {clCount} ({totalPresences ? Math.round((clCount/totalPresences)*100) : 0}%)</div>
+                    <div><span style={{ ...styles.legendDot, backgroundColor: '#2563eb' }} /> Gigante: {gsCount}</div>
+                    <div><span style={{ ...styles.legendDot, backgroundColor: '#0284c7' }} /> Slalom: {slCount}</div>
+                    <div><span style={{ ...styles.legendDot, backgroundColor: '#059669' }} /> SuperG: {sgCount}</div>
+                    <div><span style={{ ...styles.legendDot, backgroundColor: '#9333ea' }} /> Gare: {raceCount}</div>
+                    <div><span style={{ ...styles.legendDot, backgroundColor: '#d97706' }} /> Campo Libero / Altro: {clCount}</div>
+                    <div><span style={{ ...styles.legendDot, backgroundColor: '#ef4444' }} /> Assenze: {totalAbsences}</div>
                   </div>
                 </div>
               </div>
@@ -858,6 +952,62 @@ export default function Home() {
           </button>
         )}
       </nav>
+
+      {/* MODALE MODIFICA PRESENZE DA ATTIVITÀ */}
+      {editingActivity && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCardLarge}>
+            <h3 style={styles.modalTitle}>Gestisci Presenze: {editingActivity.category}</h3>
+            <p style={{ fontSize: '13px', color: '#64748b', marginTop: '-10px', marginBottom: '16px' }}>
+              Data: <strong>{editingActivity.date}</strong>
+            </p>
+
+            <div style={{ maxHeight: '350px', overflowY: 'auto', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {members.filter(m => {
+                if (m.role !== 'athlete') return false;
+                const targetCat = editingActivity.category.split('|')[2]?.trim() || 'Tutti';
+                if (targetCat !== 'Tutti' && targetCat !== '' && m.category !== targetCat) return false;
+                return true;
+              }).map(athlete => {
+                const isChecked = !!modalAttendance[athlete.id];
+                return (
+                  <div
+                    key={athlete.id}
+                    onClick={() => setModalAttendance({ ...modalAttendance, [athlete.id]: !isChecked })}
+                    style={{
+                      ...styles.memberRow,
+                      cursor: 'pointer',
+                      backgroundColor: isChecked ? '#f0fdf4' : '#f8fafc',
+                      borderColor: isChecked ? '#86efac' : '#e2e8f0'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{
+                        ...styles.checkboxSquare,
+                        backgroundColor: isChecked ? '#16a34a' : '#ffffff',
+                        borderColor: isChecked ? '#16a34a' : '#cbd5e1',
+                        color: '#ffffff'
+                      }}>
+                        {isChecked ? '✓' : ''}
+                      </div>
+                      <strong style={{ color: isChecked ? '#15803d' : '#0f172a' }}>{athlete.name}</strong>
+                    </div>
+
+                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: isChecked ? '#16a34a' : '#dc2626' }}>
+                      {isChecked ? 'PRESENTE ✅' : 'ASSENTE ❌'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={styles.modalActions}>
+              <button onClick={handleSaveModalAttendance} style={styles.btnPrimary}>Salva Modifiche</button>
+              <button onClick={() => setEditingActivity(null)} style={styles.btnCancel}>Annulla</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODALE NUOVA ATTIVITÀ */}
       {showActivityModal && (
@@ -977,7 +1127,8 @@ const styles = {
   btnPrimary: { padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: '#1e3a8a', color: '#ffffff', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' },
   btnSecondary: { padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: 'transparent', color: '#475569', marginTop: '12px', cursor: 'pointer', width: '100%' },
   btnCancel: { padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: '#94a3b8', color: '#ffffff', cursor: 'pointer' },
-  btnDeleteInline: { backgroundColor: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
+  btnDeleteInline: { backgroundColor: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: '6px', padding: '6px 10px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
+  btnEditPresence: { backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   errorText: { color: '#ef4444', fontSize: '13px', margin: '4px 0' },
 
   dashboardContainer: { minHeight: '100vh', backgroundColor: '#ffffff', color: '#0f172a', fontFamily: 'sans-serif', paddingBottom: '70px' },
@@ -997,7 +1148,7 @@ const styles = {
     right: 0,
     backgroundColor: '#ffffff',
     display: 'flex',
-    justify: 'space-around',
+    justifyContent: 'space-around',
     alignItems: 'center',
     padding: '8px 0',
     borderTop: '1px solid #e2e8f0',
@@ -1015,7 +1166,6 @@ const styles = {
   filterRow: { display: 'flex', gap: '20px', marginBottom: '20px', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0' },
   filterLabel: { fontSize: '13px', color: '#475569', marginRight: '8px', fontWeight: '600' },
   filterSelect: { padding: '6px 10px', borderRadius: '6px', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', color: '#0f172a' },
-  formRow: { display: 'flex', gap: '20px', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0' },
 
   todayBannerContainer: { backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', padding: '16px', borderRadius: '12px', marginBottom: '20px' },
   todayGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '12px', marginTop: '8px' },
@@ -1034,9 +1184,9 @@ const styles = {
   videoDate: { margin: '8px 0 0 0', fontSize: '11px', color: '#94a3b8' },
 
   membersList: { display: 'flex', flexDirection: 'column', gap: '10px' },
-  memberRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' },
-  btnPresent: { padding: '6px 12px', borderRadius: '6px', border: 'none', backgroundColor: '#16a34a', color: '#ffffff', fontWeight: 'bold', cursor: 'pointer' },
-  btnAbsent: { padding: '6px 12px', borderRadius: '6px', border: 'none', backgroundColor: '#dc2626', color: '#ffffff', fontWeight: 'bold', cursor: 'pointer' },
+  memberRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0', transition: 'all 0.2s ease' },
+  checkboxSquare: { width: '22px', height: '22px', borderRadius: '4px', border: '2px solid', display: 'flex', justifyContent: 'center', alignItems: 'center', fontWeight: 'bold', fontSize: '14px' },
+
   roleBadge: { fontSize: '11px', backgroundColor: '#e2e8f0', color: '#334155', padding: '4px 8px', borderRadius: '4px', fontWeight: '600' },
   readOnlyTag: { fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' },
 
@@ -1044,6 +1194,8 @@ const styles = {
   noteCard: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '16px', marginTop: '12px' },
 
   statsCard: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px', marginTop: '16px' },
+  statsSummaryGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '12px', marginBottom: '20px' },
+  summaryBox: { backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px', textAlign: 'center', display: 'flex', flexDirection: 'column' },
   statsLayout: { display: 'flex', gap: '40px', alignItems: 'center', marginTop: '20px', flexWrap: 'wrap' },
   pieChart: { width: '140px', height: '140px', borderRadius: '50%', border: '2px solid #ffffff', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' },
   legendList: { display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '14px', color: '#334155' },
@@ -1051,6 +1203,7 @@ const styles = {
 
   modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15,23,42,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
   modalCard: { backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', width: '90%', maxWidth: '450px', border: '1px solid #e2e8f0' },
+  modalCardLarge: { backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', width: '90%', maxWidth: '550px', border: '1px solid #e2e8f0' },
   modalTitle: { margin: '0 0 16px 0', fontSize: '18px', color: '#1e3a8a' },
   modalActions: { display: 'flex', gap: '10px', marginTop: '16px' }
 };
