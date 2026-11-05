@@ -74,7 +74,7 @@ export default function Home() {
 
   const canEditCategory = (category) => {
     if (!currentUser) return false;
-    if (currentUser.role === 'admin') return true;
+    if (currentUser.role === 'admin' || currentUser.role === 'superadmin') return true;
     if (currentUser.role === 'athlete') return false;
     if (!currentUser.coach_group || currentUser.coach_group === 'Tutti') return true;
     if (currentUser.coach_group === 'Piccoli' && isPiccoli(category)) return true;
@@ -82,8 +82,18 @@ export default function Home() {
     return false;
   };
 
-  // 1. CARICAMENTO DATI SUPABASE
+  // 1. RIPRISTINO SESSIONE DI LOGIN E CARICAMENTO DATI SUPABASE
   useEffect(() => {
+    // Ripristina la sessione dell'utente dal localStorage se presente
+    const savedUser = localStorage.getItem('skiclub_user');
+    if (savedUser) {
+      try {
+        setCurrentUser(JSON.parse(savedUser));
+      } catch (e) {
+        console.error('Errore nel caricamento della sessione salvata:', e);
+      }
+    }
+
     if (!supabase) return;
 
     const fetchData = async () => {
@@ -115,7 +125,7 @@ export default function Home() {
   // HELPER VISIBILITÀ ATTIVITÀ PER IL COACH
   const isActivityVisibleForUser = (act) => {
     if (!currentUser) return false;
-    if (currentUser.role === 'admin' || currentUser.coach_group === 'Tutti') return true;
+    if (currentUser.role === 'admin' || currentUser.role === 'superadmin' || currentUser.coach_group === 'Tutti') return true;
     
     const catTarget = act.category || '';
     if (catTarget.includes('Tutti')) return true;
@@ -129,13 +139,14 @@ export default function Home() {
     return true;
   };
 
-  // 2. LOGIN
+  // 2. LOGIN (CON SALVATAGGIO IN LOCALSTORAGE)
   const handleLogin = async (e) => {
     e.preventDefault();
     setAuthError('');
 
     if (loginEmail === 'superadmin@skirank.it' && loginPassword === 'admin') {
       setCurrentUser(SUPER_ADMIN);
+      localStorage.setItem('skiclub_user', JSON.stringify(SUPER_ADMIN));
       return;
     }
 
@@ -155,7 +166,14 @@ export default function Home() {
       setAuthError('Email o password errati.');
     } else {
       setCurrentUser(data);
+      localStorage.setItem('skiclub_user', JSON.stringify(data));
     }
+  };
+
+  // LOGOUT (PULIZIA LOCALSTORAGE)
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('skiclub_user');
   };
 
   // 3. REGISTRAZIONE UTENTE
@@ -482,7 +500,7 @@ export default function Home() {
           <h2 style={styles.headerTitle}>SKICLUB <span style={{ color: '#2563eb' }}>PRO</span></h2>
           <p style={styles.headerUser}>Utente: <strong>{currentUser.name}</strong> ({currentUser.role.toUpperCase()} {currentUser.coach_group ? `- Gruppo ${currentUser.coach_group}` : ''})</p>
         </div>
-        <button onClick={() => setCurrentUser(null)} style={styles.btnLogout}>Esci</button>
+        <button onClick={handleLogout} style={styles.btnLogout}>Esci</button>
       </header>
 
       {/* TABS DESKTOP */}
