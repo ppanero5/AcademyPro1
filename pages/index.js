@@ -86,6 +86,13 @@ export default function Home() {
     return false;
   };
 
+  // CARICAMENTO TUTTI I LOG DA SUPABASE
+  const reloadAttendanceLogs = async () => {
+    if (!supabase) return;
+    const { data: attData } = await supabase.from('attendance_history').select('*');
+    if (attData) setAttendanceLogs(attData);
+  };
+
   // 1. CARICAMENTO DATI E SESSIONE
   useEffect(() => {
     const savedUser = localStorage.getItem('skiclub_user');
@@ -109,8 +116,7 @@ export default function Home() {
       const { data: actData } = await supabase.from('daily_notes').select('*').order('created_at', { ascending: false });
       if (actData) setActivities(actData || []);
 
-      const { data: attData } = await supabase.from('attendance_history').select('*');
-      if (attData) setAttendanceLogs(attData || []);
+      await reloadAttendanceLogs();
     };
 
     fetchData();
@@ -293,7 +299,7 @@ export default function Home() {
     }
   };
 
-  // 6. SALVA / AGGIORNA PRESENZE PER UN'ATTIVITÀ
+  // 6. SALVA / AGGIORNA PRESENZE PER UN'ATTIVITÀ CON RICARICAMENTO GRAFICI
   const saveAttendanceForActivity = async (actObject, currentAttendanceState) => {
     if (!supabase || !actObject) return;
 
@@ -325,14 +331,13 @@ export default function Home() {
       });
 
       if (newEntries.length > 0) {
-        const { data: aData } = await supabase.from('attendance_history').insert(newEntries).select();
-        if (aData) {
-          const updatedLogs = attendanceLogs.filter(l => l.date !== actObject.date);
-          setAttendanceLogs([...updatedLogs, ...aData]);
-        }
+        await supabase.from('attendance_history').insert(newEntries);
       }
 
-      alert('Presenze aggiornate con successo!');
+      // 3. Ricarica completamente i dati dei log per aggiornare i grafici all'istante
+      await reloadAttendanceLogs();
+
+      alert('Presenze aggiornate con successo e grafico ricalcolato!');
     } catch (err) {
       alert(`Errore nel salvataggio presenze: ${err.message}`);
     }
@@ -792,7 +797,7 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 4: SCHEDE & GRAFICI (PRESENZE, ASSENZE E GARE) */}
+      {/* TAB 4: SCHEDE & GRAFICI (PRESENZE, ASSENZE E GARE RICALCOLATE DINAMICAMENTE) */}
       {activeTab === 'stats' && (
         <main style={styles.mainContent}>
           <h3>Schede Atleti & Statistiche Stagionali</h3>
@@ -823,11 +828,11 @@ export default function Home() {
             const absentLogs = athleteLogs.filter(l => l.status === 'absent');
             const totalAbsences = absentLogs.length;
 
-            const raceCount = presentLogs.filter(l => l.event_type === 'Gara').length;
-            const gsCount = presentLogs.filter(l => l.specialty === 'Gigante' && l.event_type !== 'Gara').length;
-            const slCount = presentLogs.filter(l => (l.specialty === 'Slalom' || l.specialty === 'Special') && l.event_type !== 'Gara').length;
-            const sgCount = presentLogs.filter(l => l.specialty === 'SuperG' && l.event_type !== 'Gara').length;
-            const clCount = presentLogs.filter(l => ['Campo Libero', 'Esercizi', 'Neve Fresca'].includes(l.specialty) && l.event_type !== 'Gara').length;
+            const raceCount = presentLogs.filter(l => (l.event_type || '').includes('Gara')).length;
+            const gsCount = presentLogs.filter(l => l.specialty === 'Gigante' && !(l.event_type || '').includes('Gara')).length;
+            const slCount = presentLogs.filter(l => (l.specialty === 'Slalom' || l.specialty === 'Special') && !(l.event_type || '').includes('Gara')).length;
+            const sgCount = presentLogs.filter(l => l.specialty === 'SuperG' && !(l.event_type || '').includes('Gara')).length;
+            const clCount = presentLogs.filter(l => ['Campo Libero', 'Esercizi', 'Neve Fresca'].includes(l.specialty) && !(l.event_type || '').includes('Gara')).length;
 
             const grandTotal = totalPresences + totalAbsences;
 
