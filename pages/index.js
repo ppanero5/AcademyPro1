@@ -74,8 +74,9 @@ export default function Home() {
   const [videoTaggedAthleteId, setVideoTaggedAthleteId] = useState('');
   const [uploading, setUploading] = useState(false);
 
-  // --- FORM SCHEDA TECNICA ATLETA ---
+  // --- FORM SCHEDA TECNICA E CATEGORIA ATLETA ---
   const [techFormData, setTechFormData] = useState({
+    category: 'Cuccioli',
     birth_date: '',
     height_cm: '',
     weight_kg: '',
@@ -411,10 +412,11 @@ export default function Home() {
     setEditingActivity(null);
   };
 
-  // 7. SALVATAGGIO SCHEDA TECNICA ATLETA
+  // 7. SALVATAGGIO SCHEDA TECNICA E CATEGORIA ATLETA
   const openTechModal = (member) => {
     setEditingTechMember(member);
     setTechFormData({
+      category: member.category || 'Cuccioli',
       birth_date: member.birth_date || '',
       height_cm: member.height_cm || '',
       weight_kg: member.weight_kg || '',
@@ -431,6 +433,7 @@ export default function Home() {
     const { error } = await supabase
       .from('club_members')
       .update({
+        category: techFormData.category,
         birth_date: techFormData.birth_date || null,
         height_cm: techFormData.height_cm ? parseFloat(techFormData.height_cm) : null,
         weight_kg: techFormData.weight_kg ? parseFloat(techFormData.weight_kg) : null,
@@ -441,11 +444,11 @@ export default function Home() {
       .eq('id', editingTechMember.id);
 
     if (error) {
-      alert(`Errore salvataggio dati tecnici: ${error.message}`);
+      alert(`Errore salvataggio dati: ${error.message}`);
     } else {
       await reloadMembers();
       setEditingTechMember(null);
-      alert('Scheda tecnica aggiornata!');
+      alert('Profilo e dati tecnici aggiornati!');
     }
   };
 
@@ -920,7 +923,7 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 4: ATLETI & SCHEDE (CON DATI TECNICI E GRAFICO ESPANDIBILE) */}
+      {/* TAB 4: ATLETI & SCHEDE (CON DATI TECNICI, CATEGORIA E GRAFICO ESPANDIBILE) */}
       {activeTab === 'members_schede' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
@@ -1023,16 +1026,17 @@ export default function Home() {
                         {isExpanded && (
                           <div style={styles.accordionBody}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                              <h5 style={{ margin: 0, color: '#1e3a8a' }}>⚙️ Dati Anagrafici & Attrezzatura Tecnica</h5>
+                              <h5 style={{ margin: 0, color: '#1e3a8a' }}>⚙️ Dati Anagrafici, Categoria & Attrezzatura</h5>
                               {canEditTech && (
                                 <button onClick={() => openTechModal(athlete)} style={styles.btnEditPresence}>
-                                  ✏️ Modifica Dati Tecnici
+                                  ✏️ Modifica Categoria e Dati Tecnici
                                 </button>
                               )}
                             </div>
 
                             {/* GRIGLIA SCHEDA TECNICA */}
                             <div style={styles.techGrid}>
+                              <div>🏆 Categoria: <strong>{athlete.category}</strong></div>
                               <div>🎂 Data di Nascita: <strong>{athlete.birth_date || 'Non inserita'}</strong></div>
                               <div>📏 Altezza: <strong>{athlete.height_cm ? `${athlete.height_cm} cm` : 'n.d.'}</strong></div>
                               <div>⚖️ Peso: <strong>{athlete.weight_kg ? `${athlete.weight_kg} kg` : 'n.d.'}</strong></div>
@@ -1110,12 +1114,21 @@ export default function Home() {
         </button>
       </nav>
 
-      {/* MODALE MODIFICA DATI TECNICI ATLETA */}
+      {/* MODALE MODIFICA CATEGORIA E DATI TECNICI ATLETA */}
       {editingTechMember && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCard}>
-            <h3 style={styles.modalTitle}>Dati Tecnici: {editingTechMember.name}</h3>
+            <h3 style={styles.modalTitle}>Scheda Profilo: {editingTechMember.name}</h3>
             <form onSubmit={handleSaveTechData} style={styles.form}>
+              <label style={styles.label}>Categoria Atleta</label>
+              <select
+                style={styles.input}
+                value={techFormData.category}
+                onChange={(e) => setTechFormData({ ...techFormData, category: e.target.value })}
+              >
+                {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+
               <label style={styles.label}>Data di Nascita</label>
               <input type="date" style={styles.input} value={techFormData.birth_date} onChange={(e) => setTechFormData({ ...techFormData, birth_date: e.target.value })} />
 
@@ -1135,7 +1148,7 @@ export default function Home() {
               <input type="number" step="1" style={styles.input} value={techFormData.boot_size_mm} onChange={(e) => setTechFormData({ ...techFormData, boot_size_mm: e.target.value })} placeholder="Es. 285" />
 
               <div style={styles.modalActions}>
-                <button type="submit" style={styles.btnPrimary}>Salva Dati Tecnici</button>
+                <button type="submit" style={styles.btnPrimary}>Salva Modifiche</button>
                 <button type="button" onClick={() => setEditingTechMember(null)} style={styles.btnCancel}>Annulla</button>
               </div>
             </form>
