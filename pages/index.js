@@ -16,6 +16,10 @@ const SUPER_ADMIN = {
   category: 'Tutti'
 };
 
+const CATEGORIES_PICCOLI = ['Superbaby', 'Baby', 'Cuccioli'];
+const CATEGORIES_GRANDI = ['Ragazzi', 'Allievi', 'Giovani', 'Senior', 'Master'];
+const ALL_CATEGORIES = [...CATEGORIES_PICCOLI, ...CATEGORIES_GRANDI];
+
 export default function Home() {
   // --- AUTENTICAZIONE E UTENTE ---
   const [currentUser, setCurrentUser] = useState(null);
@@ -29,7 +33,7 @@ export default function Home() {
   const [activities, setActivities] = useState([]);
   const [attendanceLogs, setAttendanceLogs] = useState([]);
 
-  // --- REGISTRAZIONE ---
+  // --- REGISTRAZIONE UTENTE ---
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
@@ -40,22 +44,19 @@ export default function Home() {
   // --- NAVIGAZIONE E MODALI ---
   const [activeTab, setActiveTab] = useState('videos');
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [showActivityModal, setShowActivityModal] = useState(false);
   const [showRegModal, setShowRegModal] = useState(false);
-  const [selectedAthleteForStats, setSelectedAthleteForStats] = useState(null);
-
-  // --- MODALE MODIFICA PRESENZE DA ATTIVITÀ ---
   const [editingActivity, setEditingActivity] = useState(null);
   const [modalAttendance, setModalAttendance] = useState({});
+  const [expandedAthleteId, setExpandedAthleteId] = useState(null);
+  const [editingTechMember, setEditingTechMember] = useState(null);
 
-  // --- FORM NUOVA ATTIVITÀ ---
+  // --- FORM NUOVA ATTIVITÀ & APPELLO DIRETTO ---
   const [actType, setActType] = useState('Allenamento');
   const [actSpecialty, setActSpecialty] = useState('Gigante');
   const [actDate, setActDate] = useState(new Date().toISOString().split('T')[0]);
   const [actNotes, setActNotes] = useState('');
-  const [actCategoryTarget, setActCategoryTarget] = useState('Cuccioli');
+  const [selectedCategories, setSelectedCategories] = useState(['Cuccioli']);
 
-  // --- SELEZIONE ATTIVITÀ PER APPELLO ---
   const [selectedActivityId, setSelectedActivityId] = useState('');
   const [attendance, setAttendance] = useState({});
 
@@ -73,8 +74,18 @@ export default function Home() {
   const [videoTaggedAthleteId, setVideoTaggedAthleteId] = useState('');
   const [uploading, setUploading] = useState(false);
 
-  // HELPER CATEGORIE (PICCOLI VS GRANDI)
-  const isPiccoli = (cat) => ['Superbaby', 'Baby', 'Cuccioli'].includes(cat);
+  // --- FORM SCHEDA TECNICA ATLETA ---
+  const [techFormData, setTechFormData] = useState({
+    birth_date: '',
+    height_cm: '',
+    weight_kg: '',
+    ski_gs_length: '',
+    ski_sl_length: '',
+    boot_size_mm: ''
+  });
+
+  // HELPER CATEGORIE E PERMESSI
+  const isPiccoli = (cat) => CATEGORIES_PICCOLI.includes(cat);
 
   const canEditCategory = (category) => {
     if (!currentUser) return false;
@@ -86,14 +97,35 @@ export default function Home() {
     return false;
   };
 
-  // RICARICA LOG PRESENZE
+  const isActivityVisibleForUser = (act) => {
+    if (!currentUser) return false;
+    if (currentUser.role === 'admin' || currentUser.role === 'superadmin' || currentUser.coach_group === 'Tutti') return true;
+    
+    const catTarget = act.category || '';
+    if (catTarget.includes('Tutti')) return true;
+
+    if (currentUser.coach_group === 'Piccoli') {
+      return CATEGORIES_PICCOLI.some(c => catTarget.includes(c));
+    }
+    if (currentUser.coach_group === 'Grandi') {
+      return CATEGORIES_GRANDI.some(c => catTarget.includes(c));
+    }
+    return true;
+  };
+
   const reloadAttendanceLogs = async () => {
     if (!supabase) return;
     const { data: attData, error } = await supabase.from('attendance_history').select('*');
     if (!error && attData) setAttendanceLogs(attData);
   };
 
-  // 1. CARICAMENTO DATI E SESSIONE
+  const reloadMembers = async () => {
+    if (!supabase) return;
+    const { data: membersData } = await supabase.from('club_members').select('*');
+    if (membersData) setMembers(membersData);
+  };
+
+  // 1. CARICAMENTO DATI
   useEffect(() => {
     const savedUser = localStorage.getItem('skiclub_user');
     if (savedUser) {
@@ -107,8 +139,7 @@ export default function Home() {
     if (!supabase) return;
 
     const fetchData = async () => {
-      const { data: membersData } = await supabase.from('club_members').select('*');
-      if (membersData) setMembers(membersData);
+      await reloadMembers();
 
       const { data: videoData } = await supabase.from('video_library').select('*').order('created_at', { ascending: false });
       if (videoData) setVideos(videoData);
@@ -122,7 +153,7 @@ export default function Home() {
     fetchData();
   }, []);
 
-  // SELEZIONE AUTOMATICA ATTIVITÀ DI OGGI SE PRESENTE
+  // SELEZIONE AUTOMATICA ATTIVITÀ DI OGGI
   useEffect(() => {
     const todayStr = new Date().toISOString().split('T')[0];
     const todayAct = activities.find(a => a.date === todayStr && isActivityVisibleForUser(a));
@@ -131,7 +162,7 @@ export default function Home() {
     }
   }, [activities, currentUser]);
 
-  // AL CAMBIO ATTIVITÀ SELEZIONATA, CARICA LE PRESENZE DI QUELLA SPECIFICA ATTIVITÀ
+  // AL CAMBIO ATTIVITÀ SELEZIONATA, CARICA LE PRESENZE
   useEffect(() => {
     if (!selectedActivityId) {
       setAttendance({});
@@ -150,24 +181,7 @@ export default function Home() {
     setAttendance(newAttState);
   }, [selectedActivityId, attendanceLogs, activities]);
 
-  // HELPER VISIBILITÀ ATTIVITÀ PER IL COACH
-  const isActivityVisibleForUser = (act) => {
-    if (!currentUser) return false;
-    if (currentUser.role === 'admin' || currentUser.role === 'superadmin' || currentUser.coach_group === 'Tutti') return true;
-    
-    const catTarget = act.category || '';
-    if (catTarget.includes('Tutti')) return true;
-
-    if (currentUser.coach_group === 'Piccoli') {
-      return ['Superbaby', 'Baby', 'Cuccioli', 'Piccoli'].some(c => catTarget.includes(c));
-    }
-    if (currentUser.coach_group === 'Grandi') {
-      return ['Ragazzi', 'Allievi', 'Giovani', 'Senior', 'Master', 'Grandi'].some(c => catTarget.includes(c));
-    }
-    return true;
-  };
-
-  // 2. LOGIN
+  // 2. LOGIN / LOGOUT
   const handleLogin = async (e) => {
     e.preventDefault();
     setAuthError('');
@@ -231,12 +245,27 @@ export default function Home() {
     }
   };
 
-  // 4. NUOVA ATTIVITÀ
+  // 4. NUOVA ATTIVITÀ CON CATEGORIE MULTIPLE
+  const handleCategoryToggle = (cat) => {
+    if (selectedCategories.includes(cat)) {
+      if (selectedCategories.length > 1) {
+        setSelectedCategories(selectedCategories.filter(c => c !== cat));
+      }
+    } else {
+      setSelectedCategories([...selectedCategories, cat]);
+    }
+  };
+
   const handleCreateActivity = async (e) => {
     e.preventDefault();
     if (!supabase) return;
+    if (selectedCategories.length === 0) {
+      alert('Seleziona almeno una categoria!');
+      return;
+    }
 
-    const formattedCategory = `${actType} | ${actSpecialty} | ${actCategoryTarget}`;
+    const catsString = selectedCategories.join(', ');
+    const formattedCategory = `${actType} | ${actSpecialty} | ${catsString}`;
 
     const newAct = {
       date: actDate,
@@ -253,24 +282,20 @@ export default function Home() {
 
     if (data) {
       setActivities([data[0], ...activities]);
-      setShowActivityModal(false);
       setActNotes('');
       setSelectedActivityId(String(data[0].id));
-      alert('Attività creata e selezionata per l\'appello!');
+      alert('Attività creata! Ora puoi fare l\'appello direttamente in questa pagina.');
     }
   };
 
-  // 5. ELIMINAZIONI (CON CANCELLAZIONE LOG PRESENZE COLLEGATI)
+  // 5. ELIMINAZIONI
   const handleDeleteActivity = async (actId) => {
     if (!confirm('Sei sicuro di voler eliminare questa attività e le sue presenze?')) return;
     if (!supabase) return;
 
     const actIdStr = String(actId);
-
-    // 1. Elimina le presenze collegate a questa attività
     await supabase.from('attendance_history').delete().eq('activity_id', actIdStr);
 
-    // 2. Elimina l'attività stessa
     const { error } = await supabase.from('daily_notes').delete().eq('id', actId);
     if (error) {
       alert(`Errore eliminazione attività: ${error.message}`);
@@ -278,7 +303,7 @@ export default function Home() {
       setActivities(activities.filter(a => a.id !== actId));
       if (String(selectedActivityId) === actIdStr) setSelectedActivityId('');
       await reloadAttendanceLogs();
-      alert('Attività e presenze collegate eliminate con successo.');
+      alert('Attività eliminata con successo.');
     }
   };
 
@@ -308,24 +333,24 @@ export default function Home() {
     }
   };
 
-  // 6. SALVA / AGGIORNA PRESENZE PER SINGOLA ATTIVITÀ
+  // 6. SALVA / AGGIORNA PRESENZE
   const saveAttendanceForActivity = async (actObject, currentAttendanceState) => {
     if (!supabase || !actObject) return;
 
     const parts = actObject.category.split('|');
     const actTypeTag = parts[0] ? parts[0].trim() : 'Allenamento';
     const specialtyName = parts[1] ? parts[1].trim() : 'Generale';
-    const targetCat = parts[2] ? parts[2].trim() : 'Tutti';
+    const targetCatsRaw = parts[2] ? parts[2].trim() : 'Tutti';
+    const targetCatsArray = targetCatsRaw.split(',').map(c => c.trim());
     const actIdStr = String(actObject.id);
 
     const targetAthletes = members.filter(m => {
       if (m.role !== 'athlete') return false;
-      if (targetCat !== 'Tutti' && targetCat !== '' && m.category !== targetCat) return false;
-      return true;
+      if (targetCatsRaw.includes('Tutti')) return true;
+      return targetCatsArray.includes(m.category);
     });
 
     try {
-      // 1. Rimuovi i log precedenti per la specifica attività
       const { error: delError } = await supabase
         .from('attendance_history')
         .delete()
@@ -334,7 +359,6 @@ export default function Home() {
 
       if (delError) console.warn('Note eliminazione pregressa:', delError.message);
 
-      // 2. Prepara i nuovi log legati all'activity_id
       const newEntries = targetAthletes.map(athlete => {
         const isPresent = !!currentAttendanceState[athlete.id];
         return {
@@ -362,13 +386,13 @@ export default function Home() {
   const handleSaveAttendance = () => {
     const selectedAct = activities.find(a => String(a.id) === String(selectedActivityId));
     if (!selectedAct) {
-      alert('Seleziona prima un\'attività dal banner o dal menu a tendina!');
+      alert('Seleziona prima un\'attività!');
       return;
     }
     saveAttendanceForActivity(selectedAct, attendance);
   };
 
-  // APERTURA MODALE MODIFICA PRESENZE DA SCHEDA ATTIVITÀ
+  // APERTURA MODALE MODIFICA PRESENZE DA STORICO
   const openEditAttendanceModal = (act) => {
     setEditingActivity(act);
     const existingLogs = attendanceLogs.filter(
@@ -387,7 +411,45 @@ export default function Home() {
     setEditingActivity(null);
   };
 
-  // 7. UPLOAD VIDEO SU CLOUDFLARE R2
+  // 7. SALVATAGGIO SCHEDA TECNICA ATLETA
+  const openTechModal = (member) => {
+    setEditingTechMember(member);
+    setTechFormData({
+      birth_date: member.birth_date || '',
+      height_cm: member.height_cm || '',
+      weight_kg: member.weight_kg || '',
+      ski_gs_length: member.ski_gs_length || '',
+      ski_sl_length: member.ski_sl_length || '',
+      boot_size_mm: member.boot_size_mm || ''
+    });
+  };
+
+  const handleSaveTechData = async (e) => {
+    e.preventDefault();
+    if (!supabase || !editingTechMember) return;
+
+    const { error } = await supabase
+      .from('club_members')
+      .update({
+        birth_date: techFormData.birth_date || null,
+        height_cm: techFormData.height_cm ? parseFloat(techFormData.height_cm) : null,
+        weight_kg: techFormData.weight_kg ? parseFloat(techFormData.weight_kg) : null,
+        ski_gs_length: techFormData.ski_gs_length ? parseFloat(techFormData.ski_gs_length) : null,
+        ski_sl_length: techFormData.ski_sl_length ? parseFloat(techFormData.ski_sl_length) : null,
+        boot_size_mm: techFormData.boot_size_mm ? parseFloat(techFormData.boot_size_mm) : null
+      })
+      .eq('id', editingTechMember.id);
+
+    if (error) {
+      alert(`Errore salvataggio dati tecnici: ${error.message}`);
+    } else {
+      await reloadMembers();
+      setEditingTechMember(null);
+      alert('Scheda tecnica aggiornata!');
+    }
+  };
+
+  // 8. UPLOAD VIDEO SU CLOUDFLARE R2
   const handleUploadToCloudflare = async (e) => {
     e.preventDefault();
     if (!selectedRawFile) return;
@@ -448,17 +510,17 @@ export default function Home() {
     }
   };
 
-  // FILTRA ATLETI PER CATEGORIA ATTIVITÀ
+  // CALCOLO ATLETI PER ATTIVITÀ SELEZIONATA
   const selectedActivityObject = activities.find(a => String(a.id) === String(selectedActivityId));
   const selectedActivityCategoryTarget = selectedActivityObject ? selectedActivityObject.category.split('|')[2]?.trim() || 'Tutti' : 'Tutti';
+  const targetCatsArray = selectedActivityCategoryTarget.split(',').map(c => c.trim());
 
-  const filteredMembers = members.filter(m => {
+  const filteredMembersForPresence = members.filter(m => {
     if (m.role !== 'athlete') return false;
-    if (selectedActivityCategoryTarget !== 'Tutti' && selectedActivityCategoryTarget !== '') {
-      if (m.category !== selectedActivityCategoryTarget) return false;
+    if (!selectedActivityCategoryTarget.includes('Tutti') && selectedActivityCategoryTarget !== '') {
+      if (!targetCatsArray.includes(m.category)) return false;
     }
-    const matchesSearch = m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.email.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesSearch;
+    return m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.email.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
   // VIDEO VISIBILI
@@ -528,14 +590,7 @@ export default function Home() {
                   <>
                     <label style={styles.label}>Categoria Atleta</label>
                     <select style={styles.input} value={regCategory} onChange={(e) => setRegCategory(e.target.value)}>
-                      <option value="Superbaby">Superbaby</option>
-                      <option value="Baby">Baby</option>
-                      <option value="Cuccioli">Cuccioli</option>
-                      <option value="Ragazzi">Ragazzi</option>
-                      <option value="Allievi">Allievi</option>
-                      <option value="Giovani">Giovani</option>
-                      <option value="Senior">Senior</option>
-                      <option value="Master">Master</option>
+                      {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </>
                 ) : (
@@ -578,22 +633,17 @@ export default function Home() {
         </button>
         {currentUser.role !== 'athlete' && (
           <>
-            <button style={activeTab === 'activities' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('activities')}>
-              📅 Attività & Note
+            <button style={activeTab === 'activity_appello' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('activity_appello')}>
+              📅 Attività & Appello
             </button>
-            <button style={activeTab === 'presence' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('presence')}>
-              📋 Presenze
+            <button style={activeTab === 'history' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('history')}>
+              📜 Storico Attività
             </button>
           </>
         )}
-        <button style={activeTab === 'stats' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('stats')}>
-          📊 Schede & Grafici
+        <button style={activeTab === 'members_schede' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('members_schede')}>
+          👥 Atleti & Schede
         </button>
-        {currentUser.role !== 'athlete' && (
-          <button style={activeTab === 'members' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('members')}>
-            👥 Atleti & Staff
-          </button>
-        )}
       </nav>
 
       {/* TAB 1: VIDEO LIBRARY */}
@@ -612,14 +662,7 @@ export default function Home() {
                 <label style={styles.filterLabel}>Categoria: </label>
                 <select style={styles.filterSelect} value={selectedCategoryFilter} onChange={(e) => setSelectedCategoryFilter(e.target.value)}>
                   <option value="Tutti">Tutte le Categorie</option>
-                  <option value="Superbaby">Superbaby</option>
-                  <option value="Baby">Baby</option>
-                  <option value="Cuccioli">Cuccioli</option>
-                  <option value="Ragazzi">Ragazzi</option>
-                  <option value="Allievi">Allievi</option>
-                  <option value="Giovani">Giovani</option>
-                  <option value="Senior">Senior</option>
-                  <option value="Master">Master</option>
+                  {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div>
@@ -659,17 +702,203 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 2: ATTIVITÀ & NOTE */}
-      {activeTab === 'activities' && (
+      {/* TAB 2: ATTIVITÀ & APPELLO UNIFICATA */}
+      {activeTab === 'activity_appello' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
-            <h3>Attività & Programmazione ({currentUser.coach_group || 'Tutti'})</h3>
-            <button onClick={() => setShowActivityModal(true)} style={styles.btnPrimarySmall}>+ Nuova Attività</button>
+            <h3>Crea Attività & Appello Diretto ({currentUser.coach_group || 'Tutti'})</h3>
+          </div>
+
+          {/* BOX CREAZIONE ATTIVITÀ MULTI-CATEGORIA */}
+          <div style={styles.cardBox}>
+            <h4 style={{ margin: '0 0 16px 0', color: '#1e3a8a' }}>➕ Nuova Attività del Giorno</h4>
+            <form onSubmit={handleCreateActivity} style={styles.form}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                <div>
+                  <label style={styles.label}>Tipo Evento</label>
+                  <select style={{ ...styles.input, width: '100%' }} value={actType} onChange={(e) => setActType(e.target.value)}>
+                    <option value="Allenamento">Allenamento</option>
+                    <option value="Gara">Gara</option>
+                    <option value="Stage">Stage</option>
+                    <option value="Trasferta">Trasferta</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={styles.label}>Specialità / Disciplina</label>
+                  <select style={{ ...styles.input, width: '100%' }} value={actSpecialty} onChange={(e) => setActSpecialty(e.target.value)}>
+                    <option value="Gigante">Gigante</option>
+                    <option value="Slalom">Slalom</option>
+                    <option value="SuperG">SuperG</option>
+                    <option value="Campo Libero">Campo Libero</option>
+                    <option value="Esercizi">Esercizi</option>
+                    <option value="Neve Fresca">Neve Fresca</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={styles.label}>Data</label>
+                  <input type="date" style={{ ...styles.input, width: '100%' }} value={actDate} onChange={(e) => setActDate(e.target.value)} required />
+                </div>
+              </div>
+
+              {/* SELEZIONE MULTIPLA CATEGORIE */}
+              <div style={{ marginTop: '12px' }}>
+                <label style={styles.label}>Seleziona Categorie Coinvolte (Multi-Scelta):</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '6px' }}>
+                  {ALL_CATEGORIES.map(cat => {
+                    const isSelected = selectedCategories.includes(cat);
+                    return (
+                      <button
+                        type="button"
+                        key={cat}
+                        onClick={() => handleCategoryToggle(cat)}
+                        style={{
+                          padding: '6px 14px',
+                          borderRadius: '20px',
+                          border: isSelected ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                          backgroundColor: isSelected ? '#eff6ff' : '#ffffff',
+                          color: isSelected ? '#1e40af' : '#475569',
+                          fontWeight: isSelected ? 'bold' : 'normal',
+                          cursor: 'pointer',
+                          fontSize: '13px'
+                        }}
+                      >
+                        {cat} {isSelected ? '✓' : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ marginTop: '12px' }}>
+                <label style={styles.label}>Note / Programma</label>
+                <textarea
+                  style={styles.textArea}
+                  value={actNotes}
+                  onChange={(e) => setActNotes(e.target.value)}
+                  placeholder="Orario ritrovo, tracciato o programma di giornata..."
+                />
+              </div>
+
+              <button type="submit" style={{ ...styles.btnPrimary, width: 'auto', alignSelf: 'flex-start' }}>
+                Crea Attività & Apri Appello
+              </button>
+            </form>
+          </div>
+
+          {/* BANNER ATTIVITÀ DI OGGI SELEZIONABILE */}
+          <div style={{ marginTop: '30px' }}>
+            <h4>📋 Appello Presenze Attività Odierne</h4>
+            {todayActivities.length > 0 ? (
+              <div style={styles.todayGrid}>
+                {todayActivities.map(tAct => {
+                  const isSelected = String(selectedActivityId) === String(tAct.id);
+                  return (
+                    <div
+                      key={tAct.id}
+                      onClick={() => setSelectedActivityId(String(tAct.id))}
+                      style={{
+                        ...styles.todayCard,
+                        borderColor: isSelected ? '#2563eb' : '#cbd5e1',
+                        backgroundColor: isSelected ? '#eff6ff' : '#ffffff'
+                      }}
+                    >
+                      <strong>{tAct.category}</strong>
+                      <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748b' }}>Note: {tAct.content}</p>
+                      {isSelected && <span style={styles.activeTag}>SELEZIONATA PER APPELLO ✅</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={styles.noTodayBanner}>
+                <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>ℹ️ Nessuna attività per oggi. Creane una dal modulo sopra.</p>
+              </div>
+            )}
+          </div>
+
+          {/* LISTA APPELLO DINAMICA */}
+          {selectedActivityId && (
+            <div style={{ marginTop: '24px' }}>
+              <div style={styles.categoryBadgeInfo}>
+                <span>Appello per Categorie: <strong>{selectedActivityCategoryTarget}</strong></span>
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <input
+                  type="text"
+                  style={styles.searchInput}
+                  placeholder="🔍 Cerca atleta nell'appello..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+
+              <div style={styles.membersList}>
+                {filteredMembersForPresence.length === 0 ? (
+                  <div style={styles.emptyState}>
+                    <p>Nessun atleta trovato per le categorie <strong>{selectedActivityCategoryTarget}</strong>.</p>
+                  </div>
+                ) : (
+                  filteredMembersForPresence.map(athlete => {
+                    const editable = canEditCategory(athlete.category);
+                    const isChecked = !!attendance[athlete.id];
+
+                    return (
+                      <div
+                        key={athlete.id}
+                        onClick={() => editable && setAttendance({ ...attendance, [athlete.id]: !isChecked })}
+                        style={{
+                          ...styles.memberRow,
+                          cursor: editable ? 'pointer' : 'default',
+                          backgroundColor: isChecked ? '#f0fdf4' : '#f8fafc',
+                          borderColor: isChecked ? '#86efac' : '#e2e8f0',
+                          opacity: editable ? 1 : 0.6
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{
+                            ...styles.checkboxSquare,
+                            backgroundColor: isChecked ? '#16a34a' : '#ffffff',
+                            borderColor: isChecked ? '#16a34a' : '#cbd5e1',
+                            color: '#ffffff'
+                          }}>
+                            {isChecked ? '✓' : ''}
+                          </div>
+                          <div>
+                            <strong style={{ color: isChecked ? '#15803d' : '#0f172a' }}>{athlete.name}</strong> ({athlete.category})
+                            {!editable && <span style={styles.readOnlyTag}> (Sola Lettura)</span>}
+                          </div>
+                        </div>
+
+                        <span style={{ fontSize: '13px', fontWeight: 'bold', color: isChecked ? '#16a34a' : '#94a3b8' }}>
+                          {isChecked ? 'PRESENTE' : 'ASSENTE'}
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <button onClick={handleSaveAttendance} style={{ ...styles.btnPrimary, marginTop: '20px', width: '100%' }}>
+                Salva Presenze Attività
+              </button>
+            </div>
+          )}
+        </main>
+      )}
+
+      {/* TAB 3: STORICO ATTIVITÀ */}
+      {activeTab === 'history' && (
+        <main style={styles.mainContent}>
+          <div style={styles.sectionHeader}>
+            <h3>Storico Registro Attività ({currentUser.coach_group || 'Tutti'})</h3>
           </div>
 
           <div style={{ marginTop: '20px' }}>
             {groupVisibleActivities.length === 0 ? (
-              <p style={{ color: '#94a3b8' }}>Nessuna attività programmata per il tuo gruppo.</p>
+              <p style={{ color: '#94a3b8' }}>Nessuna attività registrata nello storico.</p>
             ) : (
               groupVisibleActivities.map(act => (
                 <div key={act.id} style={styles.noteCard}>
@@ -691,263 +920,167 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 3: PRESENZE */}
-      {activeTab === 'presence' && (
+      {/* TAB 4: ATLETI & SCHEDE (CON DATI TECNICI E GRAFICO ESPANDIBILE) */}
+      {activeTab === 'members_schede' && (
         <main style={styles.mainContent}>
-          <h3>Registro Appello Presenze ({currentUser.coach_group || 'Generale'})</h3>
-
-          {/* BANNER ATTIVITÀ DI OGGI */}
-          {todayActivities.length > 0 ? (
-            <div style={styles.todayBannerContainer}>
-              <h4 style={{ margin: '0 0 10px 0', color: '#1e3a8a' }}>⚡ ATTIVITÀ DI OGGI IN PROGRAMMA:</h4>
-              <div style={styles.todayGrid}>
-                {todayActivities.map(tAct => {
-                  const isSelected = String(selectedActivityId) === String(tAct.id);
-                  return (
-                    <div
-                      key={tAct.id}
-                      onClick={() => setSelectedActivityId(String(tAct.id))}
-                      style={{
-                        ...styles.todayCard,
-                        borderColor: isSelected ? '#2563eb' : '#cbd5e1',
-                        backgroundColor: isSelected ? '#eff6ff' : '#ffffff'
-                      }}
-                    >
-                      <strong>{tAct.category}</strong>
-                      <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748b' }}>Note: {tAct.content}</p>
-                      {isSelected && <span style={styles.activeTag}>SELEZIONATA PER APPELLO ✅</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : (
-            <div style={styles.noTodayBanner}>
-              <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>ℹ️ Nessuna attività per oggi. Selezionane una dal menu sotto o creane una nuova.</p>
-            </div>
-          )}
-
-          {/* MENU A TENDINA STORICO ATTIVITÀ */}
-          <div style={{ marginBottom: '20px', marginTop: '16px' }}>
-            <label style={styles.filterLabel}>Seleziona Attività dal Registro: </label>
-            <select
-              style={{ ...styles.input, width: '100%', marginTop: '6px' }}
-              value={selectedActivityId}
-              onChange={(e) => setSelectedActivityId(e.target.value)}
-            >
-              <option value="">-- Seleziona Attività --</option>
-              {groupVisibleActivities.map(act => (
-                <option key={act.id} value={act.id}>
-                  📅 {act.date} — {act.category}
-                </option>
-              ))}
-            </select>
+          <div style={styles.sectionHeader}>
+            <h3>Elenco Atleti, Dati Tecnici & Schede</h3>
           </div>
 
-          {/* BADGE DI CONFERMA CATEGORIA FILTRATA */}
-          {selectedActivityId && (
-            <div style={styles.categoryBadgeInfo}>
-              <span>Mostrando gli atleti della categoria: <strong>{selectedActivityCategoryTarget}</strong></span>
-            </div>
-          )}
-
-          {/* SEARCH BAR ATLETI */}
           <div style={{ marginBottom: '16px' }}>
             <input
               type="text"
               style={styles.searchInput}
-              placeholder="🔍 Cerca atleta per nome..."
+              placeholder="🔍 Cerca atleta per nome o email..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
 
-          {/* LISTA ATLETI CON CHECKBOX INTERATTIVI */}
-          <div style={styles.membersList}>
-            {filteredMembers.length === 0 ? (
-              <div style={styles.emptyState}>
-                <p>Nessun atleta trovato per la categoria <strong>{selectedActivityCategoryTarget}</strong>.</p>
-              </div>
-            ) : (
-              filteredMembers.map(athlete => {
-                const editable = canEditCategory(athlete.category);
-                const isChecked = !!attendance[athlete.id];
+          {/* ATLETI DIVISI PER CATEGORIA ED ORDINATI ALFABETICAMENTE */}
+          {ALL_CATEGORIES.map(categoryName => {
+            const categoryAthletes = members
+              .filter(m => m.role === 'athlete' && m.category === categoryName)
+              .filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase()))
+              .sort((a, b) => a.name.localeCompare(b.name));
 
-                return (
-                  <div
-                    key={athlete.id}
-                    onClick={() => editable && setAttendance({ ...attendance, [athlete.id]: !isChecked })}
-                    style={{
-                      ...styles.memberRow,
-                      cursor: editable ? 'pointer' : 'default',
-                      backgroundColor: isChecked ? '#f0fdf4' : '#f8fafc',
-                      borderColor: isChecked ? '#86efac' : '#e2e8f0',
-                      opacity: editable ? 1 : 0.6
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <div style={{
-                        ...styles.checkboxSquare,
-                        backgroundColor: isChecked ? '#16a34a' : '#ffffff',
-                        borderColor: isChecked ? '#16a34a' : '#cbd5e1',
-                        color: '#ffffff'
-                      }}>
-                        {isChecked ? '✓' : ''}
-                      </div>
-                      <div>
-                        <strong style={{ color: isChecked ? '#15803d' : '#0f172a' }}>{athlete.name}</strong> ({athlete.category})
-                        {!editable && <span style={styles.readOnlyTag}> (Sola Lettura)</span>}
-                      </div>
-                    </div>
-
-                    <span style={{ fontSize: '13px', fontWeight: 'bold', color: isChecked ? '#16a34a' : '#94a3b8' }}>
-                      {isChecked ? 'PRESENTE' : 'ASSENTE'}
-                    </span>
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          <button onClick={handleSaveAttendance} style={{ ...styles.btnPrimary, marginTop: '20px', width: '100%' }}>
-            Salva Presenze Attività
-          </button>
-        </main>
-      )}
-
-      {/* TAB 4: SCHEDE & GRAFICI (FILTRA SOLO ATTIVITÀ ESISTENTI) */}
-      {activeTab === 'stats' && (
-        <main style={styles.mainContent}>
-          <h3>Schede Atleti & Statistiche Stagionali</h3>
-          <p style={styles.subTitle}>Seleziona un atleta per visualizzare il resoconto completo di Presenze, Assenze e Gare.</p>
-
-          <div style={{ marginBottom: '20px' }}>
-            <select
-              style={styles.input}
-              value={selectedAthleteForStats ? selectedAthleteForStats.id : ''}
-              onChange={(e) => {
-                const found = members.find(m => String(m.id) === String(e.target.value));
-                setSelectedAthleteForStats(found || null);
-              }}
-            >
-              <option value="">-- Seleziona Atleta --</option>
-              {members.filter(m => m.role === 'athlete').map(m => (
-                <option key={m.id} value={m.id}>{m.name} ({m.category})</option>
-              ))}
-            </select>
-          </div>
-
-          {selectedAthleteForStats && (() => {
-            // Elenco degli ID delle attività ancora esistenti
-            const existingActivityIds = new Set(activities.map(a => String(a.id)));
-
-            // Filtra solo i log legati ad attività NON eliminate
-            const athleteLogs = attendanceLogs.filter(l => {
-              if (String(l.athlete_id) !== String(selectedAthleteForStats.id)) return false;
-              if (l.activity_id && !existingActivityIds.has(String(l.activity_id))) return false;
-              return true;
-            });
-            
-            const presentLogs = athleteLogs.filter(l => l.status === 'present');
-            const totalPresences = presentLogs.length;
-
-            const absentLogs = athleteLogs.filter(l => l.status === 'absent');
-            const totalAbsences = absentLogs.length;
-
-            const raceCount = presentLogs.filter(l => (l.event_type || '').includes('Gara')).length;
-            const gsCount = presentLogs.filter(l => l.specialty === 'Gigante' && !(l.event_type || '').includes('Gara')).length;
-            const slCount = presentLogs.filter(l => (l.specialty === 'Slalom' || l.specialty === 'Special') && !(l.event_type || '').includes('Gara')).length;
-            const sgCount = presentLogs.filter(l => l.specialty === 'SuperG' && !(l.event_type || '').includes('Gara')).length;
-            const clCount = presentLogs.filter(l => ['Campo Libero', 'Esercizi', 'Neve Fresca'].includes(l.specialty) && !(l.event_type || '').includes('Gara')).length;
-
-            const grandTotal = totalPresences + totalAbsences;
-
-            const gsDeg = grandTotal ? (gsCount / grandTotal) * 360 : 0;
-            const slDeg = grandTotal ? (slCount / grandTotal) * 360 : 0;
-            const sgDeg = grandTotal ? (sgCount / grandTotal) * 360 : 0;
-            const raceDeg = grandTotal ? (raceCount / grandTotal) * 360 : 0;
-            const clDeg = grandTotal ? (clCount / grandTotal) * 360 : 0;
-
-            const pieConic = `conic-gradient(
-              #2563eb 0deg ${gsDeg}deg,
-              #0284c7 ${gsDeg}deg ${gsDeg + slDeg}deg,
-              #059669 ${gsDeg + slDeg}deg ${gsDeg + slDeg + sgDeg}deg,
-              #9333ea ${gsDeg + slDeg + sgDeg}deg ${gsDeg + slDeg + sgDeg + raceDeg}deg,
-              #d97706 ${gsDeg + slDeg + sgDeg + raceDeg}deg ${gsDeg + slDeg + sgDeg + raceDeg + clDeg}deg,
-              #ef4444 ${gsDeg + slDeg + sgDeg + raceDeg + clDeg}deg 360deg
-            )`;
+            if (categoryAthletes.length === 0) return null;
 
             return (
-              <div style={styles.statsCard}>
-                <h4>{selectedAthleteForStats.name} — Categoria {selectedAthleteForStats.category}</h4>
-                <div style={styles.statsSummaryGrid}>
-                  <div style={styles.summaryBox}>
-                    <span style={{ color: '#16a34a', fontSize: '20px', fontWeight: 'bold' }}>{totalPresences}</span>
-                    <span style={{ fontSize: '11px', color: '#64748b' }}>Presenze Totali</span>
-                  </div>
-                  <div style={styles.summaryBox}>
-                    <span style={{ color: '#9333ea', fontSize: '20px', fontWeight: 'bold' }}>{raceCount}</span>
-                    <span style={{ fontSize: '11px', color: '#64748b' }}>Gare Svolte</span>
-                  </div>
-                  <div style={styles.summaryBox}>
-                    <span style={{ color: '#dc2626', fontSize: '20px', fontWeight: 'bold' }}>{totalAbsences}</span>
-                    <span style={{ fontSize: '11px', color: '#64748b' }}>Assenze Registrate</span>
-                  </div>
-                </div>
+              <div key={categoryName} style={{ marginBottom: '28px' }}>
+                <h4 style={{ color: '#1e3a8a', borderBottom: '2px solid #e2e8f0', paddingBottom: '6px', marginBottom: '12px' }}>
+                  Categoria {categoryName} ({categoryAthletes.length})
+                </h4>
 
-                <div style={styles.statsLayout}>
-                  <div style={{ textAlign: 'center' }}>
-                    <div style={{ ...styles.pieChart, background: grandTotal > 0 ? pieConic : '#e2e8f0' }} />
-                    <p style={{ fontSize: '12px', color: '#64748b', marginTop: '8px' }}>Presenze, Gare & Assenze</p>
-                  </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {categoryAthletes.map(athlete => {
+                    const isExpanded = expandedAthleteId === athlete.id;
+                    const canEditTech = canEditCategory(athlete.category);
 
-                  <div style={styles.legendList}>
-                    <div><span style={{ ...styles.legendDot, backgroundColor: '#2563eb' }} /> Gigante: {gsCount}</div>
-                    <div><span style={{ ...styles.legendDot, backgroundColor: '#0284c7' }} /> Slalom: {slCount}</div>
-                    <div><span style={{ ...styles.legendDot, backgroundColor: '#059669' }} /> SuperG: {sgCount}</div>
-                    <div><span style={{ ...styles.legendDot, backgroundColor: '#9333ea' }} /> Gare: {raceCount}</div>
-                    <div><span style={{ ...styles.legendDot, backgroundColor: '#d97706' }} /> Campo Libero / Altro: {clCount}</div>
-                    <div><span style={{ ...styles.legendDot, backgroundColor: '#ef4444' }} /> Assenze: {totalAbsences}</div>
-                  </div>
+                    // CALCOLO GRAFICO E STATISTICHE ATLETA
+                    const existingActivityIds = new Set(activities.map(a => String(a.id)));
+                    const athleteLogs = attendanceLogs.filter(l => {
+                      if (String(l.athlete_id) !== String(athlete.id)) return false;
+                      if (l.activity_id && !existingActivityIds.has(String(l.activity_id))) return false;
+                      return true;
+                    });
+
+                    const presentLogs = athleteLogs.filter(l => l.status === 'present');
+                    const totalPresences = presentLogs.length;
+                    const absentLogs = athleteLogs.filter(l => l.status === 'absent');
+                    const totalAbsences = absentLogs.length;
+
+                    const raceCount = presentLogs.filter(l => (l.event_type || '').includes('Gara')).length;
+                    const gsCount = presentLogs.filter(l => l.specialty === 'Gigante' && !(l.event_type || '').includes('Gara')).length;
+                    const slCount = presentLogs.filter(l => (l.specialty === 'Slalom' || l.specialty === 'Special') && !(l.event_type || '').includes('Gara')).length;
+                    const sgCount = presentLogs.filter(l => l.specialty === 'SuperG' && !(l.event_type || '').includes('Gara')).length;
+                    const clCount = presentLogs.filter(l => ['Campo Libero', 'Esercizi', 'Neve Fresca'].includes(l.specialty) && !(l.event_type || '').includes('Gara')).length;
+
+                    const grandTotal = totalPresences + totalAbsences;
+
+                    const gsDeg = grandTotal ? (gsCount / grandTotal) * 360 : 0;
+                    const slDeg = grandTotal ? (slCount / grandTotal) * 360 : 0;
+                    const sgDeg = grandTotal ? (sgCount / grandTotal) * 360 : 0;
+                    const raceDeg = grandTotal ? (raceCount / grandTotal) * 360 : 0;
+                    const clDeg = grandTotal ? (clCount / grandTotal) * 360 : 0;
+
+                    const pieConic = `conic-gradient(
+                      #2563eb 0deg ${gsDeg}deg,
+                      #0284c7 ${gsDeg}deg ${gsDeg + slDeg}deg,
+                      #059669 ${gsDeg + slDeg}deg ${gsDeg + slDeg + sgDeg}deg,
+                      #9333ea ${gsDeg + slDeg + sgDeg}deg ${gsDeg + slDeg + sgDeg + raceDeg}deg,
+                      #d97706 ${gsDeg + slDeg + sgDeg + raceDeg}deg ${gsDeg + slDeg + sgDeg + raceDeg + clDeg}deg,
+                      #ef4444 ${gsDeg + slDeg + sgDeg + raceDeg + clDeg}deg 360deg
+                    )`;
+
+                    return (
+                      <div key={athlete.id} style={styles.accordionCard}>
+                        {/* INTESTAZIONE ATLETA */}
+                        <div
+                          onClick={() => setExpandedAthleteId(isExpanded ? null : athlete.id)}
+                          style={styles.accordionHeader}
+                        >
+                          <div>
+                            <strong style={{ fontSize: '16px', color: '#0f172a' }}>{athlete.name}</strong>
+                            <span style={{ fontSize: '13px', color: '#64748b', marginLeft: '10px' }}>({athlete.email})</span>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <span style={{ fontSize: '13px', color: '#16a34a', fontWeight: 'bold' }}>{totalPresences} Presenze</span>
+                            {(currentUser.role === 'admin' || currentUser.role === 'superadmin') && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleDeleteMember(athlete.id); }}
+                                style={styles.btnDeleteInline}
+                              >
+                                🗑️ Elimina
+                              </button>
+                            )}
+                            <span style={{ fontSize: '16px' }}>{isExpanded ? '▲' : '▼'}</span>
+                          </div>
+                        </div>
+
+                        {/* CONTENUTO ESPANDIBILE (DATI TECNICI + GRAFICO) */}
+                        {isExpanded && (
+                          <div style={styles.accordionBody}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                              <h5 style={{ margin: 0, color: '#1e3a8a' }}>⚙️ Dati Anagrafici & Attrezzatura Tecnica</h5>
+                              {canEditTech && (
+                                <button onClick={() => openTechModal(athlete)} style={styles.btnEditPresence}>
+                                  ✏️ Modifica Dati Tecnici
+                                </button>
+                              )}
+                            </div>
+
+                            {/* GRIGLIA SCHEDA TECNICA */}
+                            <div style={styles.techGrid}>
+                              <div>🎂 Data di Nascita: <strong>{athlete.birth_date || 'Non inserita'}</strong></div>
+                              <div>📏 Altezza: <strong>{athlete.height_cm ? `${athlete.height_cm} cm` : 'n.d.'}</strong></div>
+                              <div>⚖️ Peso: <strong>{athlete.weight_kg ? `${athlete.weight_kg} kg` : 'n.d.'}</strong></div>
+                              <div>🎿 Sci GS: <strong>{athlete.ski_gs_length ? `${athlete.ski_gs_length} cm` : 'n.d.'}</strong></div>
+                              <div>🎿 Sci SL: <strong>{athlete.ski_sl_length ? `${athlete.ski_sl_length} cm` : 'n.d.'}</strong></div>
+                              <div>👟 Scarpone: <strong>{athlete.boot_size_mm ? `${athlete.boot_size_mm} mm` : 'n.d.'}</strong></div>
+                            </div>
+
+                            {/* GRAFICO E RESOCONTO */}
+                            <h5 style={{ margin: '20px 0 12px 0', color: '#1e3a8a' }}>📊 Report Stagionale Presenze</h5>
+                            <div style={styles.statsSummaryGrid}>
+                              <div style={styles.summaryBox}>
+                                <span style={{ color: '#16a34a', fontSize: '18px', fontWeight: 'bold' }}>{totalPresences}</span>
+                                <span style={{ fontSize: '11px', color: '#64748b' }}>Presenze</span>
+                              </div>
+                              <div style={styles.summaryBox}>
+                                <span style={{ color: '#9333ea', fontSize: '18px', fontWeight: 'bold' }}>{raceCount}</span>
+                                <span style={{ fontSize: '11px', color: '#64748b' }}>Gare</span>
+                              </div>
+                              <div style={styles.summaryBox}>
+                                <span style={{ color: '#dc2626', fontSize: '18px', fontWeight: 'bold' }}>{totalAbsences}</span>
+                                <span style={{ fontSize: '11px', color: '#64748b' }}>Assenze</span>
+                              </div>
+                            </div>
+
+                            <div style={styles.statsLayout}>
+                              <div style={{ textAlign: 'center' }}>
+                                <div style={{ ...styles.pieChart, background: grandTotal > 0 ? pieConic : '#e2e8f0' }} />
+                              </div>
+
+                              <div style={styles.legendList}>
+                                <div><span style={{ ...styles.legendDot, backgroundColor: '#2563eb' }} /> Gigante: {gsCount}</div>
+                                <div><span style={{ ...styles.legendDot, backgroundColor: '#0284c7' }} /> Slalom: {slCount}</div>
+                                <div><span style={{ ...styles.legendDot, backgroundColor: '#059669' }} /> SuperG: {sgCount}</div>
+                                <div><span style={{ ...styles.legendDot, backgroundColor: '#9333ea' }} /> Gare: {raceCount}</div>
+                                <div><span style={{ ...styles.legendDot, backgroundColor: '#d97706' }} /> Campo Libero / Altro: {clCount}</div>
+                                <div><span style={{ ...styles.legendDot, backgroundColor: '#ef4444' }} /> Assenze: {totalAbsences}</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
-          })()}
-        </main>
-      )}
-
-      {/* TAB 5: ISCRITTI */}
-      {activeTab === 'members' && (
-        <main style={styles.mainContent}>
-          <h3>Elenco Iscritti Sci Club</h3>
-
-          <div style={{ marginBottom: '16px' }}>
-            <input
-              type="text"
-              style={styles.searchInput}
-              placeholder="🔍 Cerca per nome o email..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-
-          <div style={styles.membersList}>
-            {members.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase())).map(m => (
-              <div key={m.id} style={styles.memberRow}>
-                <div>
-                  <strong>{m.name}</strong> — <span style={{ color: '#64748b' }}>{m.email}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={styles.roleBadge}>
-                    {m.role.toUpperCase()} ({m.role === 'coach' ? `Gruppo ${m.coach_group || 'Grandi'}` : m.category})
-                  </span>
-                  {(currentUser.role === 'admin' || currentUser.role === 'superadmin') && (
-                    <button onClick={() => handleDeleteMember(m.id)} style={styles.btnDeleteInline}>🗑️ Elimina</button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
+          })}
         </main>
       )}
 
@@ -960,31 +1093,57 @@ export default function Home() {
 
         {currentUser.role !== 'athlete' && (
           <>
-            <button style={activeTab === 'activities' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('activities')}>
+            <button style={activeTab === 'activity_appello' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('activity_appello')}>
               <span>📅</span>
-              <span style={styles.bottomTabLabel}>Attività</span>
+              <span style={styles.bottomTabLabel}>Appello</span>
             </button>
-            <button style={activeTab === 'presence' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('presence')}>
-              <span>📋</span>
-              <span style={styles.bottomTabLabel}>Presenze</span>
+            <button style={activeTab === 'history' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('history')}>
+              <span>📜</span>
+              <span style={styles.bottomTabLabel}>Storico</span>
             </button>
           </>
         )}
 
-        <button style={activeTab === 'stats' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('stats')}>
-          <span>📊</span>
-          <span style={styles.bottomTabLabel}>Schede</span>
+        <button style={activeTab === 'members_schede' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('members_schede')}>
+          <span>👥</span>
+          <span style={styles.bottomTabLabel}>Atleti</span>
         </button>
-
-        {currentUser.role !== 'athlete' && (
-          <button style={activeTab === 'members' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('members')}>
-            <span>👥</span>
-            <span style={styles.bottomTabLabel}>Iscritti</span>
-          </button>
-        )}
       </nav>
 
-      {/* MODALE MODIFICA PRESENZE DA ATTIVITÀ */}
+      {/* MODALE MODIFICA DATI TECNICI ATLETA */}
+      {editingTechMember && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCard}>
+            <h3 style={styles.modalTitle}>Dati Tecnici: {editingTechMember.name}</h3>
+            <form onSubmit={handleSaveTechData} style={styles.form}>
+              <label style={styles.label}>Data di Nascita</label>
+              <input type="date" style={styles.input} value={techFormData.birth_date} onChange={(e) => setTechFormData({ ...techFormData, birth_date: e.target.value })} />
+
+              <label style={styles.label}>Altezza (cm)</label>
+              <input type="number" step="0.5" style={styles.input} value={techFormData.height_cm} onChange={(e) => setTechFormData({ ...techFormData, height_cm: e.target.value })} placeholder="Es. 155" />
+
+              <label style={styles.label}>Peso (kg)</label>
+              <input type="number" step="0.5" style={styles.input} value={techFormData.weight_kg} onChange={(e) => setTechFormData({ ...techFormData, weight_kg: e.target.value })} placeholder="Es. 48" />
+
+              <label style={styles.label}>Lunghezza Sci GS (cm)</label>
+              <input type="number" step="1" style={styles.input} value={techFormData.ski_gs_length} onChange={(e) => setTechFormData({ ...techFormData, ski_gs_length: e.target.value })} placeholder="Es. 165" />
+
+              <label style={styles.label}>Lunghezza Sci SL (cm)</label>
+              <input type="number" step="1" style={styles.input} value={techFormData.ski_sl_length} onChange={(e) => setTechFormData({ ...techFormData, ski_sl_length: e.target.value })} placeholder="Es. 145" />
+
+              <label style={styles.label}>Misura Scarpone (mm)</label>
+              <input type="number" step="1" style={styles.input} value={techFormData.boot_size_mm} onChange={(e) => setTechFormData({ ...techFormData, boot_size_mm: e.target.value })} placeholder="Es. 285" />
+
+              <div style={styles.modalActions}>
+                <button type="submit" style={styles.btnPrimary}>Salva Dati Tecnici</button>
+                <button type="button" onClick={() => setEditingTechMember(null)} style={styles.btnCancel}>Annulla</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODALE MODIFICA PRESENZE DA STORICO */}
       {editingActivity && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCardLarge}>
@@ -997,7 +1156,7 @@ export default function Home() {
               {members.filter(m => {
                 if (m.role !== 'athlete') return false;
                 const targetCat = editingActivity.category.split('|')[2]?.trim() || 'Tutti';
-                if (targetCat !== 'Tutti' && targetCat !== '' && m.category !== targetCat) return false;
+                if (targetCat !== 'Tutti' && targetCat !== '' && !targetCat.includes(m.category)) return false;
                 return true;
               }).map(athlete => {
                 const isChecked = !!modalAttendance[athlete.id];
@@ -1036,63 +1195,6 @@ export default function Home() {
               <button onClick={handleSaveModalAttendance} style={styles.btnPrimary}>Salva Modifiche</button>
               <button onClick={() => setEditingActivity(null)} style={styles.btnCancel}>Annulla</button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODALE NUOVA ATTIVITÀ */}
-      {showActivityModal && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modalCard}>
-            <h3 style={styles.modalTitle}>Crea Nuova Attività</h3>
-            <form onSubmit={handleCreateActivity} style={styles.form}>
-              <label style={styles.label}>Tipo Evento</label>
-              <select style={styles.input} value={actType} onChange={(e) => setActType(e.target.value)}>
-                <option value="Allenamento">Allenamento</option>
-                <option value="Gara">Gara</option>
-                <option value="Stage">Stage</option>
-                <option value="Trasferta">Trasferta</option>
-              </select>
-
-              <label style={styles.label}>Specialità / Disciplina</label>
-              <select style={styles.input} value={actSpecialty} onChange={(e) => setActSpecialty(e.target.value)}>
-                <option value="Gigante">Gigante</option>
-                <option value="Slalom">Slalom</option>
-                <option value="SuperG">SuperG</option>
-                <option value="Campo Libero">Campo Libero</option>
-                <option value="Esercizi">Esercizi</option>
-                <option value="Neve Fresca">Neve Fresca</option>
-              </select>
-
-              <label style={styles.label}>Categoria Destinataria</label>
-              <select style={styles.input} value={actCategoryTarget} onChange={(e) => setActCategoryTarget(e.target.value)}>
-                <option value="Cuccioli">Cuccioli</option>
-                <option value="Superbaby">Superbaby</option>
-                <option value="Baby">Baby</option>
-                <option value="Ragazzi">Ragazzi</option>
-                <option value="Allievi">Allievi</option>
-                <option value="Giovani">Giovani</option>
-                <option value="Senior">Senior</option>
-                <option value="Master">Master</option>
-                <option value="Tutti">Tutte le Categorie</option>
-              </select>
-
-              <label style={styles.label}>Data</label>
-              <input type="date" style={styles.input} value={actDate} onChange={(e) => setActDate(e.target.value)} required />
-
-              <label style={styles.label}>Note (Opzionale)</label>
-              <textarea
-                style={styles.textArea}
-                value={actNotes}
-                onChange={(e) => setActNotes(e.target.value)}
-                placeholder="Dettagli tracciato, orario ritrovo o programma..."
-              />
-
-              <div style={styles.modalActions}>
-                <button type="submit" style={styles.btnPrimary}>Crea Attività</button>
-                <button type="button" onClick={() => setShowActivityModal(false)} style={styles.btnCancel}>Annulla</button>
-              </div>
-            </form>
           </div>
         </div>
       )}
@@ -1144,7 +1246,7 @@ export default function Home() {
   );
 }
 
-// DEFINIZIONE STILI GRAFICI
+// DEFINIZIONE STILI
 const styles = {
   loginContainer: { minHeight: '100vh', backgroundColor: '#f8fafc', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' },
   loginCard: { backgroundColor: '#ffffff', padding: '32px', borderRadius: '16px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', color: '#0f172a', border: '1px solid #e2e8f0' },
@@ -1198,7 +1300,7 @@ const styles = {
   filterLabel: { fontSize: '13px', color: '#475569', marginRight: '8px', fontWeight: '600' },
   filterSelect: { padding: '6px 10px', borderRadius: '6px', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', color: '#0f172a' },
 
-  todayBannerContainer: { backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', padding: '16px', borderRadius: '12px', marginBottom: '20px' },
+  cardBox: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px' },
   todayGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '12px', marginTop: '8px' },
   todayCard: { padding: '12px', borderRadius: '8px', border: '2px solid', cursor: 'pointer', transition: 'all 0.2s ease' },
   activeTag: { display: 'inline-block', marginTop: '8px', fontSize: '10px', fontWeight: 'bold', color: '#2563eb' },
@@ -1218,19 +1320,22 @@ const styles = {
   memberRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0', transition: 'all 0.2s ease' },
   checkboxSquare: { width: '22px', height: '22px', borderRadius: '4px', border: '2px solid', display: 'flex', justifyContent: 'center', alignItems: 'center', fontWeight: 'bold', fontSize: '14px' },
 
-  roleBadge: { fontSize: '11px', backgroundColor: '#e2e8f0', color: '#334155', padding: '4px 8px', borderRadius: '4px', fontWeight: '600' },
   readOnlyTag: { fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' },
-
   emptyState: { textAlign: 'center', padding: '40px', color: '#94a3b8' },
   noteCard: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '16px', marginTop: '12px' },
 
-  statsCard: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px', marginTop: '16px' },
-  statsSummaryGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '12px', marginBottom: '20px' },
-  summaryBox: { backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px', textAlign: 'center', display: 'flex', flexDirection: 'column' },
-  statsLayout: { display: 'flex', gap: '40px', alignItems: 'center', marginTop: '20px', flexWrap: 'wrap' },
-  pieChart: { width: '140px', height: '140px', borderRadius: '50%', border: '2px solid #ffffff', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' },
-  legendList: { display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '14px', color: '#334155' },
-  legendDot: { display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', marginRight: '8px' },
+  accordionCard: { backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' },
+  accordionHeader: { padding: '14px 18px', backgroundColor: '#f8fafc', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', userSelect: 'none' },
+  accordionBody: { padding: '18px', borderTop: '1px solid #e2e8f0', backgroundColor: '#ffffff' },
+
+  techGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', color: '#334155' },
+
+  statsSummaryGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '12px', marginBottom: '16px' },
+  summaryBox: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px', textAlign: 'center', display: 'flex', flexDirection: 'column' },
+  statsLayout: { display: 'flex', gap: '30px', alignItems: 'center', marginTop: '12px', flexWrap: 'wrap' },
+  pieChart: { width: '120px', height: '120px', borderRadius: '50%', border: '2px solid #ffffff', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' },
+  legendList: { display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px', color: '#334155' },
+  legendDot: { display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', marginRight: '8px' },
 
   modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15,23,42,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
   modalCard: { backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', width: '90%', maxWidth: '450px', border: '1px solid #e2e8f0' },
