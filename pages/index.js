@@ -20,6 +20,10 @@ const CATEGORIES_PICCOLI = ['Superbaby', 'Baby', 'Cuccioli'];
 const CATEGORIES_GRANDI = ['Ragazzi', 'Allievi', 'Giovani', 'Senior', 'Master'];
 const ALL_CATEGORIES = [...CATEGORIES_PICCOLI, ...CATEGORIES_GRANDI];
 
+// CODICI DI REGISTRAZIONE OBBLIGATORI PER GLI ALLENATORI
+const PIN_COACH_PICCOLI = 'COACH-PICCOLI';
+const PIN_COACH_GRANDI = 'COACH-GRANDI';
+
 export default function Home() {
   // --- AUTENTICAZIONE E UTENTE ---
   const [currentUser, setCurrentUser] = useState(null);
@@ -40,6 +44,7 @@ export default function Home() {
   const [regRole, setRegRole] = useState('athlete');
   const [regCategory, setRegCategory] = useState('Cuccioli');
   const [regCoachGroup, setRegCoachGroup] = useState('Piccoli');
+  const [regPinCode, setRegPinCode] = useState('');
 
   // --- NAVIGAZIONE E MODALI ---
   const [activeTab, setActiveTab] = useState('videos');
@@ -218,10 +223,22 @@ export default function Home() {
     localStorage.removeItem('skiclub_user');
   };
 
-  // 3. REGISTRAZIONE UTENTE
+  // 3. REGISTRAZIONE UTENTE CON VERIFICA PIN PER ALLENATORI
   const handleRegister = async (e) => {
     e.preventDefault();
     if (!regName || !regEmail || !regPassword) return;
+
+    // VERIFICA PIN PER ALLENATORI
+    if (regRole === 'coach') {
+      if (regCoachGroup === 'Piccoli' && regPinCode !== PIN_COACH_PICCOLI) {
+        alert('Codice PIN non valido per Allenatore Gruppo Piccoli!');
+        return;
+      }
+      if (regCoachGroup === 'Grandi' && regPinCode !== PIN_COACH_GRANDI) {
+        alert('Codice PIN non valido per Allenatore Gruppo Grandi!');
+        return;
+      }
+    }
 
     const newUser = {
       name: regName,
@@ -242,6 +259,7 @@ export default function Home() {
         setMembers([...members, data[0]]);
         alert('Account registrato con successo!');
         setShowRegModal(false);
+        setRegPinCode('');
       }
     }
   };
@@ -603,11 +621,21 @@ export default function Home() {
                       <option value="Piccoli">Piccoli (Superbaby / Baby / Cuccioli)</option>
                       <option value="Grandi">Grandi (Ragazzi / Allievi / Giovani / Senior / Master)</option>
                     </select>
+
+                    <label style={styles.label}>Codice PIN Registrazione Allenatore</label>
+                    <input
+                      type="password"
+                      style={styles.input}
+                      value={regPinCode}
+                      onChange={(e) => setRegPinCode(e.target.value)}
+                      placeholder="Inserisci il codice segreto Allenatori"
+                      required
+                    />
                   </>
                 )}
 
                 <div style={styles.modalActions}>
-                  <button type="submit" style={styles.btnPrimary}>Conferma</button>
+                  <button type="submit" style={styles.btnPrimary}>Conferma Registrazione</button>
                   <button type="button" onClick={() => setShowRegModal(false)} style={styles.btnCancel}>Annulla</button>
                 </div>
               </form>
