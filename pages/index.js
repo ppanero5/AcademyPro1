@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import * as XLSX from 'xlsx';
 
 // Supabase Init
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -374,7 +373,6 @@ export default function Home() {
     });
 
     try {
-      // Mantiene eventuale availability dell'atleta e sovrascrive lo status UFFICIALE dell'allenatore
       const { error: delError } = await supabase
         .from('attendance_history')
         .delete()
@@ -414,7 +412,6 @@ export default function Home() {
     const actIdStr = String(actObject.id);
 
     try {
-      // Cerca se esiste già un log
       const { data: existing } = await supabase
         .from('attendance_history')
         .select('*')
@@ -515,7 +512,7 @@ export default function Home() {
     }
   };
 
-  // 8. ESPORTAZIONE EXCEL SEPARATA PER GRUPPO (PICCOLI VS GRANDI)
+  // 8. ESPORTAZIONE EXCEL / CSV NATIVA PER GRUPPI (SENZA DIPENDENZE ESTERNE)
   const handleExportExcelByGroup = (groupType) => {
     const isExportPiccoli = groupType === 'Piccoli';
     const targetCategories = isExportPiccoli ? CATEGORIES_PICCOLI : CATEGORIES_GRANDI;
@@ -530,11 +527,18 @@ export default function Home() {
       return;
     }
 
-    const excelData = filteredAthletes.map(athlete => {
+    const headers = [
+      'Nome e Cognome', 'Email', 'Categoria', 'Data Nascita', 
+      'Altezza (cm)', 'Peso (kg)', 'Sci GS (cm)', 'Sci SL (cm)', 'Scarpone (mm)',
+      'Presenze Gigante', 'Presenze Slalom', 'Presenze SuperG', 'Presenze Campo Libero', 
+      'Gare Svolte', 'TOTALE PRESENZE UFFICIALI', 'TOTALE ASSENZE UFFICIALI'
+    ];
+
+    const rows = filteredAthletes.map(athlete => {
       const athleteLogs = attendanceLogs.filter(l => {
         if (String(l.athlete_id) !== String(athlete.id)) return false;
         if (l.activity_id && !existingActivityIds.has(String(l.activity_id))) return false;
-        return l.status !== null; // Conteggia solo presenze ufficiali inserite dai coach
+        return l.status !== null;
       });
 
       const presentLogs = athleteLogs.filter(l => l.status === 'present');
@@ -546,31 +550,35 @@ export default function Home() {
       const sgCount = presentLogs.filter(l => l.specialty === 'SuperG' && !(l.event_type || '').includes('Gara')).length;
       const clCount = presentLogs.filter(l => ['Campo Libero', 'Esercizi', 'Neve Fresca'].includes(l.specialty) && !(l.event_type || '').includes('Gara')).length;
 
-      return {
-        'Nome e Cognome': athlete.name,
-        'Email': athlete.email,
-        'Categoria': athlete.category,
-        'Data Nascita': athlete.birth_date || '-',
-        'Altezza (cm)': athlete.height_cm || '-',
-        'Peso (kg)': athlete.weight_kg || '-',
-        'Sci GS (cm)': athlete.ski_gs_length || '-',
-        'Sci SL (cm)': athlete.ski_sl_length || '-',
-        'Scarpone (mm)': athlete.boot_size_mm || '-',
-        'Presenze Gigante': gsCount,
-        'Presenze Slalom': slCount,
-        'Presenze SuperG': sgCount,
-        'Presenze Campo Libero': clCount,
-        'Gare Svolte': raceCount,
-        'TOTALE PRESENZE UFFICIALI': presentLogs.length,
-        'TOTALE ASSENZE UFFICIALI': absentLogs.length
-      };
+      return [
+        `"${athlete.name}"`,
+        `"${athlete.email}"`,
+        `"${athlete.category}"`,
+        `"${athlete.birth_date || '-'}"`,
+        `"${athlete.height_cm || '-'}"`,
+        `"${athlete.weight_kg || '-'}"`,
+        `"${athlete.ski_gs_length || '-'}"`,
+        `"${athlete.ski_sl_length || '-'}"`,
+        `"${athlete.boot_size_mm || '-'}"`,
+        gsCount,
+        slCount,
+        sgCount,
+        clCount,
+        raceCount,
+        presentLogs.length,
+        absentLogs.length
+      ].join(';');
     });
 
-    const worksheet = XLSX.utils.json_to_sheet(excelData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, `Presenze ${groupType}`);
-    
-    XLSX.writeFile(workbook, `Report_Presenze_${groupType}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    const csvContent = '\uFEFF' + [headers.join(';'), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Report_Presenze_${groupType}_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // 9. UPLOAD VIDEO SU CLOUDFLARE R2
@@ -1141,13 +1149,13 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 4: ATLETI & SCHEDE (CON EXPORT EXCEL SEPARATO PER GRUPPI) */}
+      {/* TAB 4: ATLETI & SCHEDE (CON EXPORT EXCEL/CSV SEPARATO PER GRUPPI) */}
       {activeTab === 'members_schede' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
             <h3>Elenco Atleti, Dati Tecnici & Schede</h3>
             
-            {/* PULSANTI DI DOWNLOAD EXCEL PER GLI ALLENATORI */}
+            {/* PULSANTI DI DOWNLOAD EXCEL / CSV PER GLI ALLENATORI */}
             {currentUser.role !== 'athlete' && (
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 <button onClick={() => handleExportExcelByGroup('Piccoli')} style={styles.btnExcel}>
