@@ -274,6 +274,10 @@ export default function Home() {
   // STATO MODALE VIDEO ATTIVO
   const [activeAnalysisVideo, setActiveAnalysisVideo] = useState(null);
 
+  // STATO MODALE EDIT NOTE ATTIVITÀ
+  const [editingNotesActivity, setEditingNotesActivity] = useState(null);
+  const [updatedNoteText, setUpdatedNoteText] = useState('');
+
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
@@ -531,6 +535,25 @@ export default function Home() {
       setActNotes('');
       setSelectedActivityId(String(data[0].id));
       alert('Attività creata!');
+    }
+  };
+
+  // FUNZIONE SALVATAGGIO MODIFICA NOTE ATTIVITÀ dallo storico
+  const handleSaveActivityNotes = async (e) => {
+    e.preventDefault();
+    if (!supabase || !editingNotesActivity) return;
+
+    const { error } = await supabase
+      .from('daily_notes')
+      .update({ content: updatedNoteText })
+      .eq('id', editingNotesActivity.id);
+
+    if (error) {
+      alert(`Errore aggiornamento note: ${error.message}`);
+    } else {
+      setActivities(activities.map(a => a.id === editingNotesActivity.id ? { ...a, content: updatedNoteText } : a));
+      setEditingNotesActivity(null);
+      alert('Note aggiornate con successo!');
     }
   };
 
@@ -1332,6 +1355,7 @@ export default function Home() {
         </main>
       )}
 
+      {/* TAB STORICO ATTIVITÀ CON OPZIONE MODIFICA NOTE PER ALLENATORI */}
       {activeTab === 'history' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
@@ -1346,10 +1370,21 @@ export default function Home() {
                 <div key={act.id} style={styles.noteCard}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                     <strong>📅 {act.date} — {act.category}</strong>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <button onClick={() => openEditAttendanceModal(act)} style={styles.btnEditPresence}>
-                        📋 Gestisci / Modifica Presenze
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => {
+                          setEditingNotesActivity(act);
+                          setUpdatedNoteText(act.content || '');
+                        }}
+                        style={styles.btnEditNotes}
+                      >
+                        ✏️ Modifica Note
                       </button>
+
+                      <button onClick={() => openEditAttendanceModal(act)} style={styles.btnEditPresence}>
+                        📋 Gestisci Presenze
+                      </button>
+
                       <button onClick={() => handleDeleteActivity(act.id)} style={styles.btnDeleteInline}>🗑️ Elimina</button>
                     </div>
                   </div>
@@ -1571,6 +1606,32 @@ export default function Home() {
         </button>
       </nav>
 
+      {/* MODALE PER MODIFICA NOTE ATTIVITÀ DALLO STORICO */}
+      {editingNotesActivity && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCard}>
+            <h3 style={styles.modalTitle}>Modifica Programma / Note</h3>
+            <p style={{ fontSize: '13px', color: '#64748b', marginTop: '-10px', marginBottom: '12px' }}>
+              Attività del <strong>{editingNotesActivity.date}</strong> ({editingNotesActivity.category})
+            </p>
+            <form onSubmit={handleSaveActivityNotes} style={styles.form}>
+              <label style={styles.label}>Testo Note / Programma</label>
+              <textarea
+                style={{ ...styles.textArea, minHeight: '120px' }}
+                value={updatedNoteText}
+                onChange={(e) => setUpdatedNoteText(e.target.value)}
+                placeholder="Inserisci o modifica le note dell'attività..."
+                required
+              />
+              <div style={styles.modalActions}>
+                <button type="submit" style={styles.btnPrimary}>Salva Modifiche</button>
+                <button type="button" onClick={() => setEditingNotesActivity(null)} style={styles.btnCancel}>Annulla</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {editingTechMember && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCard}>
@@ -1713,7 +1774,7 @@ export default function Home() {
   );
 }
 
-// OGGETTO STILI AGGIORNATO COMPRESO DI STYLE SEEKBAR
+// OGGETTO STILI AGGIORNATO COMPRESO DI STYLE PER MODIFICA NOTE
 const styles = {
   loginContainer: { minHeight: '100vh', backgroundColor: '#f8fafc', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' },
   loginCard: { backgroundColor: '#ffffff', padding: '32px', borderRadius: '16px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', color: '#0f172a', border: '1px solid #e2e8f0' },
@@ -1729,6 +1790,7 @@ const styles = {
   btnCancel: { padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: '#94a3b8', color: '#ffffff', cursor: 'pointer' },
   btnDeleteInline: { backgroundColor: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: '6px', padding: '6px 10px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   btnEditPresence: { backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
+  btnEditNotes: { backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   btnExcel: { backgroundColor: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '6px', padding: '8px 14px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   errorText: { color: '#ef4444', fontSize: '13px', margin: '4px 0' },
 
