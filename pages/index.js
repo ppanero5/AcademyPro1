@@ -24,21 +24,23 @@ const ALL_CATEGORIES = [...CATEGORIES_PICCOLI, ...CATEGORIES_GRANDI];
 const PIN_COACH_PICCOLI = 'COACH-PICCOLI';
 const PIN_COACH_GRANDI = 'COACH-GRANDI';
 
-// --- COMPONENTE PLAYER VIDEO AVANZATO (ANALISI TECNICA + CANVAS DISEGNO TOUCH/MOUSE) ---
+// --- COMPONENTE PLAYER VIDEO AVANZATO (PLAY/PAUSA, FULLSCREEN, FRAME, SPEED, CANVAS TOUCH/MOUSE) ---
 const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const containerRef = useRef(null);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawColor, setDrawColor] = useState('#ef4444'); // Rosso default
 
-  // Sincronizza le dimensioni del Canvas con il Video
+  // Sincronizza le dimensioni del Canvas con quelle reali del Video
   const syncCanvasSize = () => {
     const v = videoRef.current;
     const c = canvasRef.current;
     if (v && c) {
-      c.width = v.clientWidth;
-      c.height = v.clientHeight;
+      c.width = v.clientWidth || 300;
+      c.height = v.clientHeight || 200;
     }
   };
 
@@ -46,6 +48,19 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
     window.addEventListener('resize', syncCanvasSize);
     return () => window.removeEventListener('resize', syncCanvasSize);
   }, []);
+
+  // CONTROLLI PLAYBACK
+  const togglePlay = () => {
+    if (videoRef.current) {
+      if (videoRef.current.paused) {
+        videoRef.current.play();
+        setIsPlaying(true);
+      } else {
+        videoRef.current.pause();
+        setIsPlaying(false);
+      }
+    }
+  };
 
   const changeSpeed = (rate) => {
     setPlaybackRate(rate);
@@ -57,7 +72,24 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
   const stepFrame = (seconds) => {
     if (videoRef.current) {
       videoRef.current.pause();
+      setIsPlaying(false);
       videoRef.current.currentTime += seconds;
+    }
+  };
+
+  const toggleFullScreen = () => {
+    if (containerRef.current) {
+      if (!document.fullscreenElement) {
+        if (containerRef.current.requestFullscreen) {
+          containerRef.current.requestFullscreen();
+        } else if (containerRef.current.webkitRequestFullscreen) {
+          containerRef.current.webkitRequestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        }
+      }
     }
   };
 
@@ -69,7 +101,7 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
     }
   };
 
-  // HELPER EVENTI MOUSE & TOUCH
+  // LOGICA DISEGNO (TOUCH + MOUSE)
   const getCoordinates = (e) => {
     const c = canvasRef.current;
     if (!c) return { x: 0, y: 0 };
@@ -83,9 +115,6 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
   };
 
   const startDrawing = (e) => {
-    if (videoRef.current && !videoRef.current.paused) {
-      videoRef.current.pause(); // Mette in pausa per facilitare il disegno
-    }
     const c = canvasRef.current;
     if (!c) return;
     const ctx = c.getContext('2d');
@@ -116,7 +145,8 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
 
   return (
     <div style={styles.videoCard}>
-      <div style={{ position: 'relative', width: '100%', backgroundColor: '#000000' }}>
+      {/* CONTAINER VIDEO + CANVAS */}
+      <div ref={containerRef} style={{ position: 'relative', width: '100%', backgroundColor: '#000000', overflow: 'hidden' }}>
         <video
           ref={videoRef}
           src={video.video_url}
@@ -124,8 +154,10 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
           style={styles.videoPlayer}
           preload="metadata"
           onLoadedMetadata={syncCanvasSize}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
         />
-        {/* CANVAS OVERLAY PER DISEGNO (MOUSE + TOUCH) */}
+        {/* CANVAS OVERLAY DISEGNO */}
         <canvas
           ref={canvasRef}
           onMouseDown={startDrawing}
@@ -160,8 +192,19 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
         <p style={styles.videoSub}>📍 {video.location} - {video.slope}</p>
         <p style={styles.videoDate}>📅 {video.date} | Coach: {video.uploaded_by}</p>
 
-        {/* CONTROLLI VELOCITÀ E FRAME */}
+        {/* CONTROLLI AVANZATI MEDIA & ANALISI */}
         <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {/* BARRA COMANDI PRINCIPALI: PLAY/PAUSA + SCHERMO INTERO */}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button onClick={togglePlay} style={{ ...styles.btnPrimarySmall, flex: 1 }}>
+              {isPlaying ? '⏸ Pausa' : '▶ Play'}
+            </button>
+            <button onClick={toggleFullScreen} style={{ ...styles.btnFrame, backgroundColor: '#3b82f6', color: '#ffffff' }}>
+              ⛶ Schermo Intero
+            </button>
+          </div>
+
+          {/* VELOCITÀ DI RIPRODUZIONE */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#475569' }}>Velocità:</span>
             {[0.2, 0.5, 1, 1.5, 2].map(speed => (
@@ -184,17 +227,17 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
             ))}
           </div>
 
+          {/* AVANZAMENTO FRAME PER FRAME + DISEGNO */}
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
             <button onClick={() => stepFrame(-0.04)} style={styles.btnFrame}>◀ Frame</button>
             <button onClick={() => stepFrame(0.04)} style={styles.btnFrame}>Frame ▶</button>
-            
-            {/* SELETTORE COLORE E TASTO CANCELLA DISEGNO */}
+
             <input
               type="color"
               value={drawColor}
               onChange={(e) => setDrawColor(e.target.value)}
               style={{ width: '28px', height: '28px', padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
-              title="Scegli colore pennello"
+              title="Colore Pennello"
             />
             <button onClick={clearCanvas} style={styles.btnClearCanvas}>🗑️ Cancella Disegno</button>
           </div>
