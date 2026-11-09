@@ -24,13 +24,12 @@ const ALL_CATEGORIES = [...CATEGORIES_PICCOLI, ...CATEGORIES_GRANDI];
 const PIN_COACH_PICCOLI = 'COACH-PICCOLI';
 const PIN_COACH_GRANDI = 'COACH-GRANDI';
 
-// --- COMPONENTE PLAYER VIDEO AVANZATO (PLAY/PAUSA, FULLSCREEN, FRAME, SPEED, CANVAS TOUCH/MOUSE) ---
+// --- COMPONENTE PLAYER VIDEO VIOLA (CONTROLLI NATIVI FUNZIONANTI + DISEGNO IN PAUSA) ---
 const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const containerRef = useRef(null);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [isPaused, setIsPaused] = useState(true);
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawColor, setDrawColor] = useState('#ef4444'); // Rosso default
 
@@ -49,19 +48,6 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
     return () => window.removeEventListener('resize', syncCanvasSize);
   }, []);
 
-  // CONTROLLI PLAYBACK
-  const togglePlay = () => {
-    if (videoRef.current) {
-      if (videoRef.current.paused) {
-        videoRef.current.play();
-        setIsPlaying(true);
-      } else {
-        videoRef.current.pause();
-        setIsPlaying(false);
-      }
-    }
-  };
-
   const changeSpeed = (rate) => {
     setPlaybackRate(rate);
     if (videoRef.current) {
@@ -72,24 +58,8 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
   const stepFrame = (seconds) => {
     if (videoRef.current) {
       videoRef.current.pause();
-      setIsPlaying(false);
+      setIsPaused(true);
       videoRef.current.currentTime += seconds;
-    }
-  };
-
-  const toggleFullScreen = () => {
-    if (containerRef.current) {
-      if (!document.fullscreenElement) {
-        if (containerRef.current.requestFullscreen) {
-          containerRef.current.requestFullscreen();
-        } else if (containerRef.current.webkitRequestFullscreen) {
-          containerRef.current.webkitRequestFullscreen();
-        }
-      } else {
-        if (document.exitFullscreen) {
-          document.exitFullscreen();
-        }
-      }
     }
   };
 
@@ -115,6 +85,7 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
   };
 
   const startDrawing = (e) => {
+    if (!isPaused) return; // Disegna solo a video in pausa
     const c = canvasRef.current;
     if (!c) return;
     const ctx = c.getContext('2d');
@@ -129,7 +100,7 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
   };
 
   const draw = (e) => {
-    if (!isDrawing) return;
+    if (!isDrawing || !isPaused) return;
     const c = canvasRef.current;
     if (!c) return;
     const ctx = c.getContext('2d');
@@ -145,8 +116,7 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
 
   return (
     <div style={styles.videoCard}>
-      {/* CONTAINER VIDEO + CANVAS */}
-      <div ref={containerRef} style={{ position: 'relative', width: '100%', backgroundColor: '#000000', overflow: 'hidden' }}>
+      <div style={{ position: 'relative', width: '100%', backgroundColor: '#000000' }}>
         <video
           ref={videoRef}
           src={video.video_url}
@@ -154,10 +124,10 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
           style={styles.videoPlayer}
           preload="metadata"
           onLoadedMetadata={syncCanvasSize}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
+          onPlay={() => setIsPaused(false)}
+          onPause={() => setIsPaused(true)}
         />
-        {/* CANVAS OVERLAY DISEGNO */}
+        {/* CANVAS OVERLAY PER DISEGNO: ATTIVO SOLO QUANDO IL VIDEO È IN PAUSA PER NON BLOCCARE I TASTI NATIVI DEL VIDEO */}
         <canvas
           ref={canvasRef}
           onMouseDown={startDrawing}
@@ -172,10 +142,10 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
             top: 0,
             left: 0,
             width: '100%',
-            height: '100%',
-            pointerEvents: 'auto',
+            height: 'calc(100% - 40px)', // Lascia scoperta la barra dei controlli del video
+            pointerEvents: isPaused ? 'auto' : 'none',
             touchAction: 'none',
-            cursor: 'crosshair'
+            cursor: isPaused ? 'crosshair' : 'default'
           }}
         />
       </div>
@@ -192,32 +162,21 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
         <p style={styles.videoSub}>📍 {video.location} - {video.slope}</p>
         <p style={styles.videoDate}>📅 {video.date} | Coach: {video.uploaded_by}</p>
 
-        {/* CONTROLLI AVANZATI MEDIA & ANALISI */}
+        {/* CONTROLLI ANALISI CON PULSANTI IN STILE VIOLA ORIGINALE */}
         <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {/* BARRA COMANDI PRINCIPALI: PLAY/PAUSA + SCHERMO INTERO */}
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <button onClick={togglePlay} style={{ ...styles.btnPrimarySmall, flex: 1 }}>
-              {isPlaying ? '⏸ Pausa' : '▶ Play'}
-            </button>
-            <button onClick={toggleFullScreen} style={{ ...styles.btnFrame, backgroundColor: '#3b82f6', color: '#ffffff' }}>
-              ⛶ Schermo Intero
-            </button>
-          </div>
-
-          {/* VELOCITÀ DI RIPRODUZIONE */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#475569' }}>Velocità:</span>
+            <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#6b21a8' }}>Velocità:</span>
             {[0.2, 0.5, 1, 1.5, 2].map(speed => (
               <button
                 key={speed}
                 onClick={() => changeSpeed(speed)}
                 style={{
-                  padding: '3px 7px',
+                  padding: '3px 8px',
                   fontSize: '11px',
                   borderRadius: '4px',
-                  border: '1px solid #cbd5e1',
-                  backgroundColor: playbackRate === speed ? '#1e3a8a' : '#ffffff',
-                  color: playbackRate === speed ? '#ffffff' : '#334155',
+                  border: '1px solid #c084fc',
+                  backgroundColor: playbackRate === speed ? '#7e22ce' : '#ffffff',
+                  color: playbackRate === speed ? '#ffffff' : '#6b21a8',
                   fontWeight: 'bold',
                   cursor: 'pointer'
                 }}
@@ -227,20 +186,25 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
             ))}
           </div>
 
-          {/* AVANZAMENTO FRAME PER FRAME + DISEGNO */}
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <button onClick={() => stepFrame(-0.04)} style={styles.btnFrame}>◀ Frame</button>
-            <button onClick={() => stepFrame(0.04)} style={styles.btnFrame}>Frame ▶</button>
+            <button onClick={() => stepFrame(-0.04)} style={styles.btnPurpleFrame}>◀ Frame</button>
+            <button onClick={() => stepFrame(0.04)} style={styles.btnPurpleFrame}>Frame ▶</button>
 
             <input
               type="color"
               value={drawColor}
               onChange={(e) => setDrawColor(e.target.value)}
               style={{ width: '28px', height: '28px', padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
-              title="Colore Pennello"
+              title="Colore Pennello Disegno"
             />
             <button onClick={clearCanvas} style={styles.btnClearCanvas}>🗑️ Cancella Disegno</button>
           </div>
+
+          {isPaused && (
+            <span style={{ fontSize: '11px', color: '#7e22ce', fontWeight: 'bold', fontStyle: 'italic', marginTop: '2px' }}>
+              ✏️ Video in pausa: puoi disegnare direttamente sullo schermo!
+            </span>
+          )}
         </div>
       </div>
     </div>
@@ -1017,7 +981,7 @@ export default function Home() {
         </button>
       </nav>
 
-      {/* TAB 1: VIDEO LIBRARY CON PLAYER AVANZATO */}
+      {/* TAB 1: VIDEO LIBRARY CON PLAYER VIOLA ORIGINALE */}
       {activeTab === 'videos' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
@@ -1744,7 +1708,7 @@ const styles = {
   btnDeleteInline: { backgroundColor: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: '6px', padding: '6px 10px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   btnEditPresence: { backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   btnExcel: { backgroundColor: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '6px', padding: '8px 14px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
-  btnFrame: { padding: '4px 8px', fontSize: '11px', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#f1f5f9', color: '#0f172a', fontWeight: 'bold', cursor: 'pointer' },
+  btnPurpleFrame: { padding: '4px 10px', fontSize: '11px', borderRadius: '4px', border: '1px solid #c084fc', backgroundColor: '#f3e8ff', color: '#6b21a8', fontWeight: 'bold', cursor: 'pointer' },
   btnClearCanvas: { padding: '4px 8px', fontSize: '11px', borderRadius: '4px', border: '1px solid #fca5a5', backgroundColor: '#fef2f2', color: '#991b1b', fontWeight: 'bold', cursor: 'pointer' },
   errorText: { color: '#ef4444', fontSize: '13px', margin: '4px 0' },
 
@@ -1793,7 +1757,7 @@ const styles = {
 
   videoGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' },
   videoCard: { backgroundColor: '#ffffff', borderRadius: '12px', overflow: 'hidden', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.03)' },
-  videoPlayer: { width: '100%', height: '220px', backgroundColor: '#000000', display: 'block' },
+  videoPlayer: { width: '100%', maxHeight: '450px', backgroundColor: '#000000', display: 'block' },
   videoMeta: { padding: '12px' },
   badgeSpecialty: { backgroundColor: '#2563eb', color: '#ffffff', fontSize: '10px', fontWeight: 'bold', padding: '2px 6px', borderRadius: '4px' },
   videoTitle: { margin: '8px 0 4px 0', fontSize: '16px', color: '#0f172a' },
