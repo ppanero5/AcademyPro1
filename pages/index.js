@@ -24,28 +24,44 @@ const ALL_CATEGORIES = [...CATEGORIES_PICCOLI, ...CATEGORIES_GRANDI];
 const PIN_COACH_PICCOLI = 'COACH-PICCOLI';
 const PIN_COACH_GRANDI = 'COACH-GRANDI';
 
-// --- COMPONENTE PLAYER VIDEO VIOLA (PLAYER PULITO + SBLOCCO CONTROLLI NATIVI) ---
-const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
+// --- MODALE ANALISI VIDEO DEDICATA (SCHERMO INTERO MOBILE COME DA SCREENSHOT) ---
+const VideoModalPlayer = ({ video, onClose }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const [playbackRate, setPlaybackRate] = useState(1);
-  const [isPaused, setIsPaused] = useState(true);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [drawColor, setDrawColor] = useState('#ef4444');
+  const containerRef = useRef(null);
 
-  const syncCanvasSize = () => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [drawColor, setDrawColor] = useState('#00b4d8'); // Azzurro come screenshot
+
+  // Adatta le dimensioni del Canvas alla dimensione effettiva del video sullo schermo
+  const syncCanvas = () => {
     const v = videoRef.current;
     const c = canvasRef.current;
     if (v && c) {
       c.width = v.clientWidth || 300;
-      c.height = v.clientHeight ? v.clientHeight - 45 : 200; // Lascia libera la barra dei controlli
+      c.height = v.clientHeight || 400;
     }
   };
 
   useEffect(() => {
-    window.addEventListener('resize', syncCanvasSize);
-    return () => window.removeEventListener('resize', syncCanvasSize);
+    syncCanvas();
+    window.addEventListener('resize', syncCanvas);
+    return () => window.removeEventListener('resize', syncCanvas);
   }, []);
+
+  const togglePlay = () => {
+    if (videoRef.current) {
+      if (videoRef.current.paused) {
+        videoRef.current.play();
+        setIsPlaying(true);
+      } else {
+        videoRef.current.pause();
+        setIsPlaying(false);
+      }
+    }
+  };
 
   const changeSpeed = (rate) => {
     setPlaybackRate(rate);
@@ -57,7 +73,7 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
   const stepFrame = (seconds) => {
     if (videoRef.current) {
       videoRef.current.pause();
-      setIsPaused(true);
+      setIsPlaying(false);
       videoRef.current.currentTime += seconds;
     }
   };
@@ -70,7 +86,8 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
     }
   };
 
-  const getCoordinates = (e) => {
+  // DISEGNO DINAMICO TOUCH / MOUSE
+  const getCoords = (e) => {
     const c = canvasRef.current;
     if (!c) return { x: 0, y: 0 };
     const rect = c.getBoundingClientRect();
@@ -83,26 +100,25 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
   };
 
   const startDrawing = (e) => {
-    if (!isPaused) return;
     const c = canvasRef.current;
     if (!c) return;
     const ctx = c.getContext('2d');
-    const { x, y } = getCoordinates(e);
+    const { x, y } = getCoords(e);
 
     ctx.beginPath();
     ctx.moveTo(x, y);
     ctx.strokeStyle = drawColor;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 4;
     ctx.lineCap = 'round';
     setIsDrawing(true);
   };
 
   const draw = (e) => {
-    if (!isDrawing || !isPaused) return;
+    if (!isDrawing) return;
     const c = canvasRef.current;
     if (!c) return;
     const ctx = c.getContext('2d');
-    const { x, y } = getCoordinates(e);
+    const { x, y } = getCoords(e);
 
     ctx.lineTo(x, y);
     ctx.stroke();
@@ -113,69 +129,69 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
   };
 
   return (
-    <div style={styles.videoCard}>
-      <div style={{ position: 'relative', width: '100%', backgroundColor: '#000000' }}>
-        <video
-          ref={videoRef}
-          src={video.video_url}
-          controls
-          style={styles.videoPlayer}
-          preload="metadata"
-          onLoadedMetadata={syncCanvasSize}
-          onPlay={() => setIsPaused(false)}
-          onPause={() => setIsPaused(true)}
-        />
-        {/* CANVAS CHE NON BLOCCA I CONTROLLI SE IL VIDEO È IN PLAY O NELLA BARRA IN BASSO */}
-        <canvas
-          ref={canvasRef}
-          onMouseDown={startDrawing}
-          onMouseMove={draw}
-          onMouseUp={stopDrawing}
-          onMouseLeave={stopDrawing}
-          onTouchStart={startDrawing}
-          onTouchMove={draw}
-          onTouchEnd={stopDrawing}
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: 'calc(100% - 45px)',
-            pointerEvents: isPaused ? 'auto' : 'none',
-            touchAction: 'none',
-            cursor: isPaused ? 'crosshair' : 'default'
-          }}
-        />
-      </div>
-
-      <div style={styles.videoMeta}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-          <span style={styles.badgeSpecialty}>{video.specialty}</span>
-          {currentUser.role !== 'athlete' && (
-            <button onClick={() => onDeleteVideo(video.id)} style={styles.btnDeleteInline}>🗑️ Elimina</button>
-          )}
+    <div style={styles.modalOverlayDark}>
+      <div style={styles.modalVideoContainer}>
+        {/* BARRA SUPERIORE TITOLO + CHIUDI */}
+        <div style={styles.modalVideoHeader}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '15px', color: '#ffffff' }}>
+              {video.specialty} • {video.athlete_name}
+            </h3>
+          </div>
+          <button onClick={onClose} style={styles.btnCloseModal}>✕</button>
         </div>
 
-        <h4 style={styles.videoTitle}>{video.athlete_name}</h4>
-        <p style={styles.videoSub}>📍 {video.location} - {video.slope}</p>
-        <p style={styles.videoDate}>📅 {video.date} | Coach: {video.uploaded_by}</p>
+        {/* CONTAINER CENTRALE VIDEO + CANVAS OVERLAY */}
+        <div ref={containerRef} style={styles.videoStage}>
+          <video
+            ref={videoRef}
+            src={video.video_url}
+            playsInline
+            style={styles.videoStageElement}
+            onLoadedData={syncCanvas}
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => setIsPlaying(false)}
+            onClick={togglePlay}
+          />
 
-        <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#6b21a8' }}>Velocità:</span>
-            {[0.2, 0.5, 1, 1.5, 2].map(speed => (
+          <canvas
+            ref={canvasRef}
+            onMouseDown={startDrawing}
+            onMouseMove={draw}
+            onMouseUp={stopDrawing}
+            onMouseLeave={stopDrawing}
+            onTouchStart={startDrawing}
+            onTouchMove={draw}
+            onTouchEnd={stopDrawing}
+            style={styles.canvasOverlay}
+          />
+        </div>
+
+        {/* CONTROLLI INFERIORI (ESATTAMENTE COME NELLO SCREENSHOT) */}
+        <div style={styles.videoControlsBox}>
+          {/* RIGA 1: PLAY/PAUSA - FRAME - FRAME */}
+          <div style={styles.controlsRow}>
+            <button onClick={togglePlay} style={styles.btnControlSquare}>
+              {isPlaying ? '⏸ Pausa' : '▶ Play'}
+            </button>
+            <button onClick={() => stepFrame(-0.04)} style={styles.btnControlSquare}>
+              ⏮ Frame
+            </button>
+            <button onClick={() => stepFrame(0.04)} style={styles.btnControlSquare}>
+              ⏭ Frame
+            </button>
+          </div>
+
+          {/* RIGA 2: VELOCITÀ */}
+          <div style={styles.controlsRow}>
+            {[0.2, 0.5, 1].map(speed => (
               <button
                 key={speed}
                 onClick={() => changeSpeed(speed)}
                 style={{
-                  padding: '3px 8px',
-                  fontSize: '11px',
-                  borderRadius: '4px',
-                  border: '1px solid #c084fc',
-                  backgroundColor: playbackRate === speed ? '#7e22ce' : '#ffffff',
-                  color: playbackRate === speed ? '#ffffff' : '#6b21a8',
-                  fontWeight: 'bold',
-                  cursor: 'pointer'
+                  ...styles.btnControlSquare,
+                  backgroundColor: playbackRate === speed ? '#2563eb' : '#1e293b',
+                  borderColor: playbackRate === speed ? '#3b82f6' : '#334155'
                 }}
               >
                 {speed}x
@@ -183,25 +199,22 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
             ))}
           </div>
 
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <button onClick={() => stepFrame(-0.04)} style={styles.btnPurpleFrame}>◀ Frame</button>
-            <button onClick={() => stepFrame(0.04)} style={styles.btnPurpleFrame}>Frame ▶</button>
+          {/* RIGA 3: COLORE + CANCELLA TRATTI */}
+          <div style={styles.colorRow}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '13px', color: '#94a3b8' }}>Colore:</span>
+              <input
+                type="color"
+                value={drawColor}
+                onChange={(e) => setDrawColor(e.target.value)}
+                style={styles.colorPickerInput}
+              />
+            </div>
 
-            <input
-              type="color"
-              value={drawColor}
-              onChange={(e) => setDrawColor(e.target.value)}
-              style={{ width: '28px', height: '28px', padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
-              title="Colore Pennello Disegno"
-            />
-            <button onClick={clearCanvas} style={styles.btnClearCanvas}>🗑️ Cancella Disegno</button>
+            <button onClick={clearCanvas} style={styles.btnClearRed}>
+              Cancella Tratti
+            </button>
           </div>
-
-          {isPaused && (
-            <span style={{ fontSize: '11px', color: '#7e22ce', fontWeight: 'bold', fontStyle: 'italic', marginTop: '2px' }}>
-              ✏️ Metti in pausa per disegnare sullo schermo
-            </span>
-          )}
         </div>
       </div>
     </div>
@@ -218,6 +231,9 @@ export default function Home() {
   const [videos, setVideos] = useState([]);
   const [activities, setActivities] = useState([]);
   const [attendanceLogs, setAttendanceLogs] = useState([]);
+
+  // STATO MODALE VIDEO ATTIVO
+  const [activeAnalysisVideo, setActiveAnalysisVideo] = useState(null);
 
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
@@ -946,6 +962,7 @@ export default function Home() {
         </button>
       </nav>
 
+      {/* TAB 1: VIDEO LIBRARY CON ICONE / CARDS PER APRIRE LA MODALE DI ANALISI */}
       {activeTab === 'videos' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
@@ -981,16 +998,39 @@ export default function Home() {
           ) : (
             <div style={styles.videoGrid}>
               {visibleVideos.map((video) => (
-                <VideoAnalysisPlayer
-                  key={video.id}
-                  video={video}
-                  currentUser={currentUser}
-                  onDeleteVideo={handleDeleteVideo}
-                />
+                <div key={video.id} style={styles.videoThumbnailCard}>
+                  <div
+                    onClick={() => setActiveAnalysisVideo(video)}
+                    style={styles.thumbnailPreviewBox}
+                  >
+                    <video src={video.video_url} style={styles.thumbnailVideo} preload="metadata" />
+                    <div style={styles.playOverlayIcon}>▶ APRI ANALISI</div>
+                  </div>
+
+                  <div style={styles.videoMeta}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={styles.badgeSpecialty}>{video.specialty}</span>
+                      {currentUser.role !== 'athlete' && (
+                        <button onClick={() => handleDeleteVideo(video.id)} style={styles.btnDeleteInline}>🗑️</button>
+                      )}
+                    </div>
+                    <h4 style={styles.videoTitle}>{video.athlete_name}</h4>
+                    <p style={styles.videoSub}>📍 {video.location} - {video.slope}</p>
+                    <p style={styles.videoDate}>📅 {video.date}</p>
+                  </div>
+                </div>
               ))}
             </div>
           )}
         </main>
+      )}
+
+      {/* MODALE ANALISI VIDEO DEDICATA QUANDO UN VIDEO VIENE CLICCATO */}
+      {activeAnalysisVideo && (
+        <VideoModalPlayer
+          video={activeAnalysisVideo}
+          onClose={() => setActiveAnalysisVideo(null)}
+        />
       )}
 
       {activeTab === 'athlete_program' && currentUser.role === 'athlete' && (
@@ -1634,6 +1674,7 @@ export default function Home() {
   );
 }
 
+// STILI AGGIORNATI CON MODALE FULL-SCREEN DARK SCURO COME DA SCREENSHOT
 const styles = {
   loginContainer: { minHeight: '100vh', backgroundColor: '#f8fafc', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' },
   loginCard: { backgroundColor: '#ffffff', padding: '32px', borderRadius: '16px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', color: '#0f172a', border: '1px solid #e2e8f0' },
@@ -1650,8 +1691,6 @@ const styles = {
   btnDeleteInline: { backgroundColor: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: '6px', padding: '6px 10px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   btnEditPresence: { backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   btnExcel: { backgroundColor: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '6px', padding: '8px 14px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
-  btnPurpleFrame: { padding: '4px 10px', fontSize: '11px', borderRadius: '4px', border: '1px solid #c084fc', backgroundColor: '#f3e8ff', color: '#6b21a8', fontWeight: 'bold', cursor: 'pointer' },
-  btnClearCanvas: { padding: '4px 8px', fontSize: '11px', borderRadius: '4px', border: '1px solid #fca5a5', backgroundColor: '#fef2f2', color: '#991b1b', fontWeight: 'bold', cursor: 'pointer' },
   errorText: { color: '#ef4444', fontSize: '13px', margin: '4px 0' },
 
   dashboardContainer: { minHeight: '100vh', backgroundColor: '#ffffff', color: '#0f172a', fontFamily: 'sans-serif', paddingBottom: '70px' },
@@ -1697,14 +1736,34 @@ const styles = {
   noTodayBanner: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '12px 16px', borderRadius: '8px', marginBottom: '16px' },
   categoryBadgeInfo: { backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', color: '#1e40af' },
 
-  videoGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' },
-  videoCard: { backgroundColor: '#ffffff', borderRadius: '12px', overflow: 'hidden', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.03)' },
-  videoPlayer: { width: '100%', maxHeight: '450px', backgroundColor: '#000000', display: 'block' },
+  // CARD THUMBNAIL LIBRARY VIDEO
+  videoGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '20px' },
+  videoThumbnailCard: { backgroundColor: '#ffffff', borderRadius: '12px', overflow: 'hidden', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.03)' },
+  thumbnailPreviewBox: { position: 'relative', height: '180px', backgroundColor: '#0f172a', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center' },
+  thumbnailVideo: { width: '100%', height: '100%', objectFit: 'cover', opacity: 0.8 },
+  playOverlayIcon: { position: 'absolute', backgroundColor: 'rgba(15, 23, 42, 0.85)', color: '#ffffff', padding: '8px 16px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold', border: '1px solid #3b82f6' },
   videoMeta: { padding: '12px' },
   badgeSpecialty: { backgroundColor: '#2563eb', color: '#ffffff', fontSize: '10px', fontWeight: 'bold', padding: '2px 6px', borderRadius: '4px' },
-  videoTitle: { margin: '8px 0 4px 0', fontSize: '16px', color: '#0f172a' },
+  videoTitle: { margin: '8px 0 4px 0', fontSize: '15px', color: '#0f172a' },
   videoSub: { margin: 0, fontSize: '12px', color: '#475569' },
-  videoDate: { margin: '8px 0 0 0', fontSize: '11px', color: '#94a3b8' },
+  videoDate: { margin: '6px 0 0 0', fontSize: '11px', color: '#94a3b8' },
+
+  // MODALE PLAYER VIDEO SCURO (FULLSCREEN MOBILE STILE SCREENSHOT)
+  modalOverlayDark: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#090d16', zIndex: 2000, display: 'flex', justifyContent: 'center', alignItems: 'center' },
+  modalVideoContainer: { width: '100%', maxWidth: '480px', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#0b1120' },
+  modalVideoHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #1e293b', backgroundColor: '#0f172a' },
+  btnCloseModal: { background: 'none', border: 'none', color: '#94a3b8', fontSize: '20px', cursor: 'pointer', fontWeight: 'bold' },
+
+  videoStage: { position: 'relative', flex: 1, backgroundColor: '#000000', display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+  videoStageElement: { width: '100%', height: '100%', objectFit: 'contain' },
+  canvasOverlay: { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', touchAction: 'none', cursor: 'crosshair' },
+
+  videoControlsBox: { backgroundColor: '#0f172a', padding: '16px', borderTop: '1px solid #1e293b', display: 'flex', flexDirection: 'column', gap: '10px' },
+  controlsRow: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' },
+  btnControlSquare: { backgroundColor: '#1e293b', color: '#ffffff', border: '1px solid #334155', borderRadius: '8px', padding: '12px 0', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center' },
+  colorRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' },
+  colorPickerInput: { width: '32px', height: '32px', padding: 0, border: 'none', borderRadius: '50%', background: 'none', cursor: 'pointer' },
+  btnClearRed: { backgroundColor: '#7f1d1d', color: '#fca5a5', border: '1px solid #991b1b', borderRadius: '8px', padding: '8px 16px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' },
 
   membersList: { display: 'flex', flexDirection: 'column', gap: '10px' },
   memberRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0', transition: 'all 0.2s ease' },
