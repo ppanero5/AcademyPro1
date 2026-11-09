@@ -790,7 +790,7 @@ export default function Home() {
         )}
 
         <button style={activeTab === 'members_schede' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('members_schede')}>
-          👥 Atleti & Schede
+          👥 {currentUser.role === 'athlete' ? 'La Mia Scheda' : 'Atleti & Schede'}
         </button>
       </nav>
 
@@ -1149,13 +1149,13 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 4: ATLETI & SCHEDE (CON EXPORT EXCEL/CSV SEPARATO PER GRUPPI) */}
+      {/* TAB 4: ATLETI & SCHEDE (PRIVACY ATLETI AGGIORNATA: ATLETA VEDE SOLO LA SUA SCHEDA) */}
       {activeTab === 'members_schede' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
-            <h3>Elenco Atleti, Dati Tecnici & Schede</h3>
+            <h3>{currentUser.role === 'athlete' ? 'La Mia Scheda Profilo & Statistiche' : 'Elenco Atleti, Dati Tecnici & Schede'}</h3>
             
-            {/* PULSANTI DI DOWNLOAD EXCEL / CSV PER GLI ALLENATORI */}
+            {/* PULSANTI DI DOWNLOAD EXCEL / CSV SOLO PER GLI ALLENATORI */}
             {currentUser.role !== 'athlete' && (
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 <button onClick={() => handleExportExcelByGroup('Piccoli')} style={styles.btnExcel}>
@@ -1168,21 +1168,28 @@ export default function Home() {
             )}
           </div>
 
-          <div style={{ marginBottom: '16px' }}>
-            <input
-              type="text"
-              style={styles.searchInput}
-              placeholder="🔍 Cerca atleta per nome o email..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
+          {currentUser.role !== 'athlete' && (
+            <div style={{ marginBottom: '16px' }}>
+              <input
+                type="text"
+                style={styles.searchInput}
+                placeholder="🔍 Cerca atleta per nome o email..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+          )}
 
-          {/* ATLETI DIVISI PER CATEGORIA ED ORDINATI ALFABETICAMENTE */}
+          {/* FILTRAGGIO PRIVACY: ATLETI VEDONO SOLO SE STESSI, COACH VEDONO IL LORO GRUPPO/CATEGORIA */}
           {ALL_CATEGORIES.map(categoryName => {
             const categoryAthletes = members
               .filter(m => m.role === 'athlete' && m.category === categoryName)
-              .filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase()))
+              .filter(m => {
+                if (currentUser.role === 'athlete') {
+                  return String(m.id) === String(currentUser.id);
+                }
+                return m.name.toLowerCase().includes(searchQuery.toLowerCase());
+              })
               .sort((a, b) => a.name.localeCompare(b.name));
 
             if (categoryAthletes.length === 0) return null;
@@ -1195,7 +1202,8 @@ export default function Home() {
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {categoryAthletes.map(athlete => {
-                    const isExpanded = expandedAthleteId === athlete.id;
+                    // Gli atleti vedono la propria scheda sempre aperta per default
+                    const isExpanded = currentUser.role === 'athlete' ? true : expandedAthleteId === athlete.id;
                     const canEditTech = canEditCategory(athlete.category);
 
                     // CALCOLO GRAFICO E STATISTICHE ATLETA (SOLO CONTEGGI UFFICIALI COACH)
@@ -1238,8 +1246,11 @@ export default function Home() {
                       <div key={athlete.id} style={styles.accordionCard}>
                         {/* INTESTAZIONE ATLETA */}
                         <div
-                          onClick={() => setExpandedAthleteId(isExpanded ? null : athlete.id)}
-                          style={styles.accordionHeader}
+                          onClick={() => currentUser.role !== 'athlete' && setExpandedAthleteId(isExpanded ? null : athlete.id)}
+                          style={{
+                            ...styles.accordionHeader,
+                            cursor: currentUser.role === 'athlete' ? 'default' : 'pointer'
+                          }}
                         >
                           <div>
                             <strong style={{ fontSize: '16px', color: '#0f172a' }}>{athlete.name}</strong>
@@ -1256,7 +1267,7 @@ export default function Home() {
                                 🗑️ Elimina
                               </button>
                             )}
-                            <span style={{ fontSize: '16px' }}>{isExpanded ? '▲' : '▼'}</span>
+                            {currentUser.role !== 'athlete' && <span style={{ fontSize: '16px' }}>{isExpanded ? '▲' : '▼'}</span>}
                           </div>
                         </div>
 
@@ -1353,7 +1364,7 @@ export default function Home() {
 
         <button style={activeTab === 'members_schede' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('members_schede')}>
           <span>👥</span>
-          <span style={styles.bottomTabLabel}>Atleti</span>
+          <span style={styles.bottomTabLabel}>{currentUser.role === 'athlete' ? 'Scheda' : 'Atleti'}</span>
         </button>
       </nav>
 
