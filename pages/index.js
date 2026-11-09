@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import * as XLSX from 'xlsx';
 
 // Supabase Init
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -110,6 +111,10 @@ export default function Home() {
     const catTarget = act.category || '';
     if (catTarget.includes('Tutti')) return true;
 
+    if (currentUser.role === 'athlete') {
+      return catTarget.includes(currentUser.category);
+    }
+
     if (currentUser.coach_group === 'Piccoli') {
       return CATEGORIES_PICCOLI.some(c => catTarget.includes(c));
     }
@@ -168,7 +173,7 @@ export default function Home() {
     }
   }, [activities, currentUser]);
 
-  // AL CAMBIO ATTIVITÀ SELEZIONATA, CARICA LE PRESENZE
+  // AL CAMBIO ATTIVITÀ SELEZIONATA, CARICA LE PRESENZE UFFICIALI (SOLO QUELLE CON STATUS DEFINITO DALL'ALLENATORE)
   useEffect(() => {
     if (!selectedActivityId) {
       setAttendance({});
@@ -178,7 +183,7 @@ export default function Home() {
     if (!act) return;
 
     const existingLogs = attendanceLogs.filter(
-      l => l.date === act.date && String(l.activity_id) === String(act.id)
+      l => l.date === act.date && String(l.activity_id) === String(act.id) && l.status !== null
     );
     const newAttState = {};
     existingLogs.forEach(log => {
@@ -228,7 +233,6 @@ export default function Home() {
     e.preventDefault();
     if (!regName || !regEmail || !regPassword) return;
 
-    // VERIFICA PIN PER ALLENATORI
     if (regRole === 'coach') {
       if (regCoachGroup === 'Piccoli' && regPinCode !== PIN_COACH_PICCOLI) {
         alert('Codice PIN non valido per Allenatore Gruppo Piccoli!');
@@ -352,7 +356,7 @@ export default function Home() {
     }
   };
 
-  // 6. SALVA / AGGIORNA PRESENZE
+  // 6. SALVA PRESENZE UFFICIALI (ALLENATORE)
   const saveAttendanceForActivity = async (actObject, currentAttendanceState) => {
     if (!supabase || !actObject) return;
 
@@ -370,6 +374,7 @@ export default function Home() {
     });
 
     try {
+      // Mantiene eventuale availability dell'atleta e sovrascrive lo status UFFICIALE dell'allenatore
       const { error: delError } = await supabase
         .from('attendance_history')
         .delete()
@@ -396,9 +401,49 @@ export default function Home() {
       }
 
       await reloadAttendanceLogs();
-      alert('Presenze salvate e grafici aggiornati con successo!');
+      alert('Presenze ufficiali salvate e grafici aggiornati!');
     } catch (err) {
       alert(`Impossibile salvare le presenze: ${err.message}`);
+    }
+  };
+
+  // RISPOSTA ATLETA: AGGIORNA SOLO LA DISPONIBILITÀ (NON INFLUENZA I GRAFICI)
+  const handleAthleteSelfAvailability = async (actObject, choice) => {
+    if (!supabase || !currentUser || currentUser.role !== 'athlete') return;
+
+    const actIdStr = String(actObject.id);
+
+    try {
+      // Cerca se esiste già un log
+      const { data: existing } = await supabase
+        .from('attendance_history')
+        .select('*')
+        .eq('activity_id', actIdStr)
+        .eq('athlete_id', String(currentUser.id))
+        .single();
+
+      if (existing) {
+        await supabase
+          .from('attendance_history')
+          .update({ availability: choice })
+          .eq('id', existing.id);
+      } else {
+        const parts = actObject.category.split('|');
+        await supabase.from('attendance_history').insert([{
+          date: actObject.date,
+          athlete_id: String(currentUser.id),
+          specialty: parts[1] ? parts[1].trim() : 'Generale',
+          status: null, // Nessun impatto sui grafici finché il coach non fa l'appello
+          event_type: parts[0] ? parts[0].trim() : 'Allenamento',
+          activity_id: actIdStr,
+          availability: choice
+        }]);
+      }
+
+      await reloadAttendanceLogs();
+      alert(`Hai segnalato: ${choice === 'present' ? 'Ci sarò ✅' : 'Non ci sarò ❌'}`);
+    } catch (err) {
+      alert(`Errore salvataggio risposta: ${err.message}`);
     }
   };
 
@@ -415,7 +460,7 @@ export default function Home() {
   const openEditAttendanceModal = (act) => {
     setEditingActivity(act);
     const existingLogs = attendanceLogs.filter(
-      l => l.date === act.date && String(l.activity_id) === String(act.id)
+      l => l.date === act.date && String(l.activity_id) === String(act.id) && l.status !== null
     );
     const initialMap = {};
     existingLogs.forEach(log => {
@@ -470,7 +515,65 @@ export default function Home() {
     }
   };
 
-  // 8. UPLOAD VIDEO SU CLOUDFLARE R2
+  // 8. ESPORTAZIONE EXCEL SEPARATA PER GRUPPO (PICCOLI VS GRANDI)
+  const handleExportExcelByGroup = (groupType) => {
+    const isExportPiccoli = groupType === 'Piccoli';
+    const targetCategories = isExportPiccoli ? CATEGORIES_PICCOLI : CATEGORIES_GRANDI;
+    const existingActivityIds = new Set(activities.map(a => String(a.id)));
+
+    const filteredAthletes = members.filter(
+      m => m.role === 'athlete' && targetCategories.includes(m.category)
+    );
+
+    if (filteredAthletes.length === 0) {
+      alert(`Nessun atleta trovato per il Gruppo ${groupType}.`);
+      return;
+    }
+
+    const excelData = filteredAthletes.map(athlete => {
+      const athleteLogs = attendanceLogs.filter(l => {
+        if (String(l.athlete_id) !== String(athlete.id)) return false;
+        if (l.activity_id && !existingActivityIds.has(String(l.activity_id))) return false;
+        return l.status !== null; // Conteggia solo presenze ufficiali inserite dai coach
+      });
+
+      const presentLogs = athleteLogs.filter(l => l.status === 'present');
+      const absentLogs = athleteLogs.filter(l => l.status === 'absent');
+
+      const raceCount = presentLogs.filter(l => (l.event_type || '').includes('Gara')).length;
+      const gsCount = presentLogs.filter(l => l.specialty === 'Gigante' && !(l.event_type || '').includes('Gara')).length;
+      const slCount = presentLogs.filter(l => (l.specialty === 'Slalom' || l.specialty === 'Special') && !(l.event_type || '').includes('Gara')).length;
+      const sgCount = presentLogs.filter(l => l.specialty === 'SuperG' && !(l.event_type || '').includes('Gara')).length;
+      const clCount = presentLogs.filter(l => ['Campo Libero', 'Esercizi', 'Neve Fresca'].includes(l.specialty) && !(l.event_type || '').includes('Gara')).length;
+
+      return {
+        'Nome e Cognome': athlete.name,
+        'Email': athlete.email,
+        'Categoria': athlete.category,
+        'Data Nascita': athlete.birth_date || '-',
+        'Altezza (cm)': athlete.height_cm || '-',
+        'Peso (kg)': athlete.weight_kg || '-',
+        'Sci GS (cm)': athlete.ski_gs_length || '-',
+        'Sci SL (cm)': athlete.ski_sl_length || '-',
+        'Scarpone (mm)': athlete.boot_size_mm || '-',
+        'Presenze Gigante': gsCount,
+        'Presenze Slalom': slCount,
+        'Presenze SuperG': sgCount,
+        'Presenze Campo Libero': clCount,
+        'Gare Svolte': raceCount,
+        'TOTALE PRESENZE UFFICIALI': presentLogs.length,
+        'TOTALE ASSENZE UFFICIALI': absentLogs.length
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(excelData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, `Presenze ${groupType}`);
+    
+    XLSX.writeFile(workbook, `Report_Presenze_${groupType}_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  // 9. UPLOAD VIDEO SU CLOUDFLARE R2
   const handleUploadToCloudflare = async (e) => {
     e.preventDefault();
     if (!selectedRawFile) return;
@@ -662,7 +765,8 @@ export default function Home() {
         <button style={activeTab === 'videos' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('videos')}>
           📹 Video Library
         </button>
-        {currentUser.role !== 'athlete' && (
+        
+        {currentUser.role !== 'athlete' ? (
           <>
             <button style={activeTab === 'activity_appello' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('activity_appello')}>
               📅 Attività & Appello
@@ -671,7 +775,12 @@ export default function Home() {
               📜 Storico Attività
             </button>
           </>
+        ) : (
+          <button style={activeTab === 'athlete_program' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('athlete_program')}>
+            📅 Programma & Disponibilità
+          </button>
         )}
+
         <button style={activeTab === 'members_schede' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('members_schede')}>
           👥 Atleti & Schede
         </button>
@@ -733,8 +842,78 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 2: ATTIVITÀ & APPELLO UNIFICATA */}
-      {activeTab === 'activity_appello' && (
+      {/* TAB PER ATLETI: INDICAZIONI DISPONIBILITÀ (NON MODIFICA I GRAFICI) */}
+      {activeTab === 'athlete_program' && currentUser.role === 'athlete' && (
+        <main style={styles.mainContent}>
+          <div style={styles.sectionHeader}>
+            <h3>Programma Attività Categoria {currentUser.category}</h3>
+          </div>
+
+          <div style={{ marginTop: '16px' }}>
+            {groupVisibleActivities.length === 0 ? (
+              <div style={styles.emptyState}><p>Nessuna attività in programma per la tua categoria.</p></div>
+            ) : (
+              groupVisibleActivities.map(act => {
+                const myLog = attendanceLogs.find(
+                  l => l.date === act.date && String(l.activity_id) === String(act.id) && String(l.athlete_id) === String(currentUser.id)
+                );
+                const myAvailability = myLog ? myLog.availability : null;
+
+                return (
+                  <div key={act.id} style={styles.athleteActCard}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
+                      <div>
+                        <span style={styles.badgeSpecialty}>{act.category.split('|')[0]} - {act.category.split('|')[1]}</span>
+                        <h4 style={{ margin: '8px 0 4px 0', color: '#1e3a8a' }}>📅 Data: {act.date}</h4>
+                        <p style={{ margin: '4px 0', color: '#334155', whiteSpace: 'pre-wrap' }}>{act.content}</p>
+                        <span style={{ fontSize: '11px', color: '#94a3b8' }}>Inserito da: {act.author_name}</span>
+                      </div>
+
+                      {/* PULSANTI DI RISPOSTA PER L'ATLETA */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '160px' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', textAlign: 'center' }}>
+                          La tua risposta: {myAvailability === 'present' ? 'Ci sarò ✅' : myAvailability === 'absent' ? 'Non ci sarò ❌' : 'Non ancora indicata'}
+                        </span>
+                        <button
+                          onClick={() => handleAthleteSelfAvailability(act, 'present')}
+                          style={{
+                            padding: '8px 12px',
+                            borderRadius: '6px',
+                            border: 'none',
+                            backgroundColor: myAvailability === 'present' ? '#15803d' : '#22c55e',
+                            color: '#ffffff',
+                            fontWeight: 'bold',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Ci sarò ✅
+                        </button>
+                        <button
+                          onClick={() => handleAthleteSelfAvailability(act, 'absent')}
+                          style={{
+                            padding: '8px 12px',
+                            borderRadius: '6px',
+                            border: '1px solid #cbd5e1',
+                            backgroundColor: myAvailability === 'absent' ? '#ef4444' : '#ffffff',
+                            color: myAvailability === 'absent' ? '#ffffff' : '#64748b',
+                            fontWeight: 'bold',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Non ci sarò ❌
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </main>
+      )}
+
+      {/* TAB 2: ATTIVITÀ & APPELLO UNIFICATA (COACH) */}
+      {activeTab === 'activity_appello' && currentUser.role !== 'athlete' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
             <h3>Crea Attività & Appello Diretto ({currentUser.coach_group || 'Tutti'})</h3>
@@ -876,6 +1055,12 @@ export default function Home() {
                     const editable = canEditCategory(athlete.category);
                     const isChecked = !!attendance[athlete.id];
 
+                    // Mostra la risposta informativa dell'atleta se presente
+                    const athleteLog = attendanceLogs.find(
+                      l => l.date === selectedActivityObject?.date && String(l.activity_id) === String(selectedActivityId) && String(l.athlete_id) === String(athlete.id)
+                    );
+                    const availabilityNote = athleteLog?.availability;
+
                     return (
                       <div
                         key={athlete.id}
@@ -899,6 +1084,11 @@ export default function Home() {
                           </div>
                           <div>
                             <strong style={{ color: isChecked ? '#15803d' : '#0f172a' }}>{athlete.name}</strong> ({athlete.category})
+                            {availabilityNote && (
+                              <span style={{ fontSize: '11px', marginLeft: '8px', color: availabilityNote === 'present' ? '#16a34a' : '#dc2626', fontWeight: 'bold' }}>
+                                💬 Atleta: {availabilityNote === 'present' ? 'Ci sarà' : 'Non ci sarà'}
+                              </span>
+                            )}
                             {!editable && <span style={styles.readOnlyTag}> (Sola Lettura)</span>}
                           </div>
                         </div>
@@ -913,7 +1103,7 @@ export default function Home() {
               </div>
 
               <button onClick={handleSaveAttendance} style={{ ...styles.btnPrimary, marginTop: '20px', width: '100%' }}>
-                Salva Presenze Attività
+                Salva Presenze Ufficiali Attività
               </button>
             </div>
           )}
@@ -951,11 +1141,23 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 4: ATLETI & SCHEDE (CON DATI TECNICI, CATEGORIA E GRAFICO ESPANDIBILE) */}
+      {/* TAB 4: ATLETI & SCHEDE (CON EXPORT EXCEL SEPARATO PER GRUPPI) */}
       {activeTab === 'members_schede' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
             <h3>Elenco Atleti, Dati Tecnici & Schede</h3>
+            
+            {/* PULSANTI DI DOWNLOAD EXCEL PER GLI ALLENATORI */}
+            {currentUser.role !== 'athlete' && (
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button onClick={() => handleExportExcelByGroup('Piccoli')} style={styles.btnExcel}>
+                  📥 Excel Piccoli
+                </button>
+                <button onClick={() => handleExportExcelByGroup('Grandi')} style={styles.btnExcel}>
+                  📥 Excel Grandi
+                </button>
+              </div>
+            )}
           </div>
 
           <div style={{ marginBottom: '16px' }}>
@@ -988,12 +1190,12 @@ export default function Home() {
                     const isExpanded = expandedAthleteId === athlete.id;
                     const canEditTech = canEditCategory(athlete.category);
 
-                    // CALCOLO GRAFICO E STATISTICHE ATLETA
+                    // CALCOLO GRAFICO E STATISTICHE ATLETA (SOLO CONTEGGI UFFICIALI COACH)
                     const existingActivityIds = new Set(activities.map(a => String(a.id)));
                     const athleteLogs = attendanceLogs.filter(l => {
                       if (String(l.athlete_id) !== String(athlete.id)) return false;
                       if (l.activity_id && !existingActivityIds.has(String(l.activity_id))) return false;
-                      return true;
+                      return l.status !== null;
                     });
 
                     const presentLogs = athleteLogs.filter(l => l.status === 'present');
@@ -1074,7 +1276,7 @@ export default function Home() {
                             </div>
 
                             {/* GRAFICO E RESOCONTO */}
-                            <h5 style={{ margin: '20px 0 12px 0', color: '#1e3a8a' }}>📊 Report Stagionale Presenze</h5>
+                            <h5 style={{ margin: '20px 0 12px 0', color: '#1e3a8a' }}>📊 Report Stagionale Presenze Ufficiali</h5>
                             <div style={styles.statsSummaryGrid}>
                               <div style={styles.summaryBox}>
                                 <span style={{ color: '#16a34a', fontSize: '18px', fontWeight: 'bold' }}>{totalPresences}</span>
@@ -1123,7 +1325,7 @@ export default function Home() {
           <span style={styles.bottomTabLabel}>Video</span>
         </button>
 
-        {currentUser.role !== 'athlete' && (
+        {currentUser.role !== 'athlete' ? (
           <>
             <button style={activeTab === 'activity_appello' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('activity_appello')}>
               <span>📅</span>
@@ -1134,6 +1336,11 @@ export default function Home() {
               <span style={styles.bottomTabLabel}>Storico</span>
             </button>
           </>
+        ) : (
+          <button style={activeTab === 'athlete_program' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('athlete_program')}>
+            <span>📅</span>
+            <span style={styles.bottomTabLabel}>Programma</span>
+          </button>
         )}
 
         <button style={activeTab === 'members_schede' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('members_schede')}>
@@ -1303,6 +1510,7 @@ const styles = {
   btnCancel: { padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: '#94a3b8', color: '#ffffff', cursor: 'pointer' },
   btnDeleteInline: { backgroundColor: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: '6px', padding: '6px 10px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   btnEditPresence: { backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
+  btnExcel: { backgroundColor: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '6px', padding: '8px 14px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   errorText: { color: '#ef4444', fontSize: '13px', margin: '4px 0' },
 
   dashboardContainer: { minHeight: '100vh', backgroundColor: '#ffffff', color: '#0f172a', fontFamily: 'sans-serif', paddingBottom: '70px' },
@@ -1334,7 +1542,7 @@ const styles = {
   bottomTabLabel: { fontSize: '10px', marginTop: '2px' },
 
   mainContent: { padding: '24px', maxWidth: '1200px', margin: '0 auto' },
-  sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
+  sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' },
   btnPrimarySmall: { padding: '8px 16px', borderRadius: '6px', border: 'none', backgroundColor: '#1e3a8a', color: '#ffffff', fontWeight: 'bold', cursor: 'pointer' },
 
   filterRow: { display: 'flex', gap: '20px', marginBottom: '20px', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0' },
@@ -1364,6 +1572,7 @@ const styles = {
   readOnlyTag: { fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' },
   emptyState: { textAlign: 'center', padding: '40px', color: '#94a3b8' },
   noteCard: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '16px', marginTop: '12px' },
+  athleteActCard: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '16px', marginBottom: '12px' },
 
   accordionCard: { backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' },
   accordionHeader: { padding: '14px 18px', backgroundColor: '#f8fafc', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', userSelect: 'none' },
