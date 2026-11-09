@@ -24,22 +24,21 @@ const ALL_CATEGORIES = [...CATEGORIES_PICCOLI, ...CATEGORIES_GRANDI];
 const PIN_COACH_PICCOLI = 'COACH-PICCOLI';
 const PIN_COACH_GRANDI = 'COACH-GRANDI';
 
-// --- COMPONENTE PLAYER VIDEO VIOLA (CONTROLLI NATIVI FUNZIONANTI + DISEGNO IN PAUSA) ---
+// --- COMPONENTE PLAYER VIDEO VIOLA (PLAYER PULITO + SBLOCCO CONTROLLI NATIVI) ---
 const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isPaused, setIsPaused] = useState(true);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [drawColor, setDrawColor] = useState('#ef4444'); // Rosso default
+  const [drawColor, setDrawColor] = useState('#ef4444');
 
-  // Sincronizza le dimensioni del Canvas con quelle reali del Video
   const syncCanvasSize = () => {
     const v = videoRef.current;
     const c = canvasRef.current;
     if (v && c) {
       c.width = v.clientWidth || 300;
-      c.height = v.clientHeight || 200;
+      c.height = v.clientHeight ? v.clientHeight - 45 : 200; // Lascia libera la barra dei controlli
     }
   };
 
@@ -71,7 +70,6 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
     }
   };
 
-  // LOGICA DISEGNO (TOUCH + MOUSE)
   const getCoordinates = (e) => {
     const c = canvasRef.current;
     if (!c) return { x: 0, y: 0 };
@@ -85,7 +83,7 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
   };
 
   const startDrawing = (e) => {
-    if (!isPaused) return; // Disegna solo a video in pausa
+    if (!isPaused) return;
     const c = canvasRef.current;
     if (!c) return;
     const ctx = c.getContext('2d');
@@ -127,7 +125,7 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
           onPlay={() => setIsPaused(false)}
           onPause={() => setIsPaused(true)}
         />
-        {/* CANVAS OVERLAY PER DISEGNO: ATTIVO SOLO QUANDO IL VIDEO È IN PAUSA PER NON BLOCCARE I TASTI NATIVI DEL VIDEO */}
+        {/* CANVAS CHE NON BLOCCA I CONTROLLI SE IL VIDEO È IN PLAY O NELLA BARRA IN BASSO */}
         <canvas
           ref={canvasRef}
           onMouseDown={startDrawing}
@@ -142,7 +140,7 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
             top: 0,
             left: 0,
             width: '100%',
-            height: 'calc(100% - 40px)', // Lascia scoperta la barra dei controlli del video
+            height: 'calc(100% - 45px)',
             pointerEvents: isPaused ? 'auto' : 'none',
             touchAction: 'none',
             cursor: isPaused ? 'crosshair' : 'default'
@@ -162,7 +160,6 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
         <p style={styles.videoSub}>📍 {video.location} - {video.slope}</p>
         <p style={styles.videoDate}>📅 {video.date} | Coach: {video.uploaded_by}</p>
 
-        {/* CONTROLLI ANALISI CON PULSANTI IN STILE VIOLA ORIGINALE */}
         <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#6b21a8' }}>Velocità:</span>
@@ -202,7 +199,7 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
 
           {isPaused && (
             <span style={{ fontSize: '11px', color: '#7e22ce', fontWeight: 'bold', fontStyle: 'italic', marginTop: '2px' }}>
-              ✏️ Video in pausa: puoi disegnare direttamente sullo schermo!
+              ✏️ Metti in pausa per disegnare sullo schermo
             </span>
           )}
         </div>
@@ -212,19 +209,16 @@ const VideoAnalysisPlayer = ({ video, currentUser, onDeleteVideo }) => {
 };
 
 export default function Home() {
-  // --- AUTENTICAZIONE E UTENTE ---
   const [currentUser, setCurrentUser] = useState(null);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
-  // --- DATI ---
   const [members, setMembers] = useState([]);
   const [videos, setVideos] = useState([]);
   const [activities, setActivities] = useState([]);
   const [attendanceLogs, setAttendanceLogs] = useState([]);
 
-  // --- REGISTRAZIONE UTENTE ---
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
@@ -233,7 +227,6 @@ export default function Home() {
   const [regCoachGroup, setRegCoachGroup] = useState('Piccoli');
   const [regPinCode, setRegPinCode] = useState('');
 
-  // --- NAVIGAZIONE E MODALI ---
   const [activeTab, setActiveTab] = useState('videos');
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showRegModal, setShowRegModal] = useState(false);
@@ -242,7 +235,6 @@ export default function Home() {
   const [expandedAthleteId, setExpandedAthleteId] = useState(null);
   const [editingTechMember, setEditingTechMember] = useState(null);
 
-  // --- FORM NUOVA ATTIVITÀ & APPELLO DIRETTO ---
   const [actType, setActType] = useState('Allenamento');
   const [actSpecialty, setActSpecialty] = useState('Gigante');
   const [actDate, setActDate] = useState(new Date().toISOString().split('T')[0]);
@@ -252,12 +244,10 @@ export default function Home() {
   const [selectedActivityId, setSelectedActivityId] = useState('');
   const [attendance, setAttendance] = useState({});
 
-  // --- RICERCA E FILTRI ---
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('Tutti');
   const [selectedAthleteFilter, setSelectedAthleteFilter] = useState('Tutti');
 
-  // --- FORM UPLOAD VIDEO ---
   const [selectedRawFile, setSelectedRawFile] = useState(null);
   const [videoSpecialty, setVideoSpecialty] = useState('Gigante');
   const [videoDate, setVideoDate] = useState(new Date().toISOString().split('T')[0]);
@@ -266,7 +256,6 @@ export default function Home() {
   const [videoTaggedAthleteId, setVideoTaggedAthleteId] = useState('');
   const [uploading, setUploading] = useState(false);
 
-  // --- FORM SCHEDA TECNICA E CATEGORIA ATLETA ---
   const [techFormData, setTechFormData] = useState({
     category: 'Cuccioli',
     birth_date: '',
@@ -277,7 +266,6 @@ export default function Home() {
     boot_size_mm: ''
   });
 
-  // HELPER CATEGORIE E PERMESSI
   const isPiccoli = (cat) => CATEGORIES_PICCOLI.includes(cat);
 
   const canEditCategory = (category) => {
@@ -322,7 +310,6 @@ export default function Home() {
     if (membersData) setMembers(membersData);
   };
 
-  // 1. CARICAMENTO DATI
   useEffect(() => {
     const savedUser = localStorage.getItem('skiclub_user');
     if (savedUser) {
@@ -350,7 +337,6 @@ export default function Home() {
     fetchData();
   }, []);
 
-  // SELEZIONE AUTOMATICA ATTIVITÀ DI OGGI
   useEffect(() => {
     const todayStr = new Date().toISOString().split('T')[0];
     const todayAct = activities.find(a => a.date === todayStr && isActivityVisibleForUser(a));
@@ -359,7 +345,6 @@ export default function Home() {
     }
   }, [activities, currentUser]);
 
-  // AL CAMBIO ATTIVITÀ SELEZIONATA, CARICA LE PRESENZE UFFICIALI (SOLO QUELLE CON STATUS DEFINITO DALL'ALLENATORE)
   useEffect(() => {
     if (!selectedActivityId) {
       setAttendance({});
@@ -378,7 +363,6 @@ export default function Home() {
     setAttendance(newAttState);
   }, [selectedActivityId, attendanceLogs, activities]);
 
-  // 2. LOGIN / LOGOUT
   const handleLogin = async (e) => {
     e.preventDefault();
     setAuthError('');
@@ -414,7 +398,6 @@ export default function Home() {
     localStorage.removeItem('skiclub_user');
   };
 
-  // 3. REGISTRAZIONE UTENTE CON VERIFICA PIN PER ALLENATORI
   const handleRegister = async (e) => {
     e.preventDefault();
     if (!regName || !regEmail || !regPassword) return;
@@ -454,7 +437,6 @@ export default function Home() {
     }
   };
 
-  // 4. NUOVA ATTIVITÀ CON CATEGORIE MULTIPLE
   const handleCategoryToggle = (cat) => {
     if (selectedCategories.includes(cat)) {
       if (selectedCategories.length > 1) {
@@ -493,13 +475,12 @@ export default function Home() {
       setActivities([data[0], ...activities]);
       setActNotes('');
       setSelectedActivityId(String(data[0].id));
-      alert('Attività creata! Ora puoi fare l\'appello direttamente in questa pagina.');
+      alert('Attività creata!');
     }
   };
 
-  // 5. ELIMINAZIONI
   const handleDeleteActivity = async (actId) => {
-    if (!confirm('Sei sicuro di voler eliminare questa attività e le sue presenze?')) return;
+    if (!confirm('Sei sicuro di voler eliminare questa attività?')) return;
     if (!supabase) return;
 
     const actIdStr = String(actId);
@@ -512,7 +493,6 @@ export default function Home() {
       setActivities(activities.filter(a => a.id !== actId));
       if (String(selectedActivityId) === actIdStr) setSelectedActivityId('');
       await reloadAttendanceLogs();
-      alert('Attività eliminata con successo.');
     }
   };
 
@@ -525,7 +505,6 @@ export default function Home() {
       alert(`Errore eliminazione video: ${error.message}`);
     } else {
       setVideos(videos.filter(v => v.id !== videoId));
-      alert('Video eliminato con successo.');
     }
   };
 
@@ -538,11 +517,9 @@ export default function Home() {
       alert(`Errore eliminazione iscritto: ${error.message}`);
     } else {
       setMembers(members.filter(m => m.id !== memberId));
-      alert('Iscritto eliminato con successo.');
     }
   };
 
-  // 6. SALVA PRESENZE UFFICIALI (ALLENATORE)
   const saveAttendanceForActivity = async (actObject, currentAttendanceState) => {
     if (!supabase || !actObject) return;
 
@@ -586,16 +563,14 @@ export default function Home() {
       }
 
       await reloadAttendanceLogs();
-      alert('Presenze ufficiali salvate e grafici aggiornati!');
+      alert('Presenze ufficiali salvate!');
     } catch (err) {
       alert(`Impossibile salvare le presenze: ${err.message}`);
     }
   };
 
-  // RISPOSTA ATLETA: AGGIORNA SOLO LA DISPONIBILITÀ (NON INFLUENZA I GRAFICI)
   const handleAthleteSelfAvailability = async (actObject, choice) => {
     if (!supabase || !currentUser || currentUser.role !== 'athlete') return;
-
     const actIdStr = String(actObject.id);
 
     try {
@@ -617,7 +592,7 @@ export default function Home() {
           date: actObject.date,
           athlete_id: String(currentUser.id),
           specialty: parts[1] ? parts[1].trim() : 'Generale',
-          status: null, // Nessun impatto sui grafici finché il coach non fa l'appello
+          status: null,
           event_type: parts[0] ? parts[0].trim() : 'Allenamento',
           activity_id: actIdStr,
           availability: choice
@@ -640,7 +615,6 @@ export default function Home() {
     saveAttendanceForActivity(selectedAct, attendance);
   };
 
-  // APERTURA MODALE MODIFICA PRESENZE DA STORICO
   const openEditAttendanceModal = (act) => {
     setEditingActivity(act);
     const existingLogs = attendanceLogs.filter(
@@ -659,7 +633,6 @@ export default function Home() {
     setEditingActivity(null);
   };
 
-  // 7. SALVATAGGIO SCHEDA TECNICA E CATEGORIA ATLETA
   const openTechModal = (member) => {
     setEditingTechMember(member);
     setTechFormData({
@@ -695,11 +668,10 @@ export default function Home() {
     } else {
       await reloadMembers();
       setEditingTechMember(null);
-      alert('Profilo e dati tecnici aggiornati!');
+      alert('Profilo aggiornato!');
     }
   };
 
-  // 8. ESPORTAZIONE EXCEL / CSV NATIVA PER GRUPPI (SENZA DIPENDENZE ESTERNE)
   const handleExportExcelByGroup = (groupType) => {
     const isExportPiccoli = groupType === 'Piccoli';
     const targetCategories = isExportPiccoli ? CATEGORIES_PICCOLI : CATEGORIES_GRANDI;
@@ -768,7 +740,6 @@ export default function Home() {
     document.body.removeChild(link);
   };
 
-  // 9. UPLOAD VIDEO SU CLOUDFLARE R2
   const handleUploadToCloudflare = async (e) => {
     e.preventDefault();
     if (!selectedRawFile) return;
@@ -829,7 +800,6 @@ export default function Home() {
     }
   };
 
-  // CALCOLO ATLETI PER ATTIVITÀ SELEZIONATA
   const selectedActivityObject = activities.find(a => String(a.id) === String(selectedActivityId));
   const selectedActivityCategoryTarget = selectedActivityObject ? selectedActivityObject.category.split('|')[2]?.trim() || 'Tutti' : 'Tutti';
   const targetCatsArray = selectedActivityCategoryTarget.split(',').map(c => c.trim());
@@ -842,7 +812,6 @@ export default function Home() {
     return m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.email.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
-  // VIDEO VISIBILI
   const visibleVideos = videos.filter(video => {
     if (currentUser?.role === 'athlete' || currentUser?.role === 'atleta') {
       return String(video.athlete_id) === String(currentUser.id);
@@ -862,7 +831,6 @@ export default function Home() {
   const todayStr = new Date().toISOString().split('T')[0];
   const todayActivities = groupVisibleActivities.filter(a => a.date === todayStr);
 
-  // SCHERMATA LOGIN
   if (!currentUser) {
     return (
       <div style={styles.loginContainer}>
@@ -884,7 +852,6 @@ export default function Home() {
           <button onClick={() => setShowRegModal(true)} style={styles.btnSecondary}>Registra Account</button>
         </div>
 
-        {/* MODALE REGISTRAZIONE */}
         {showRegModal && (
           <div style={styles.modalOverlay}>
             <div style={styles.modalCard}>
@@ -946,7 +913,6 @@ export default function Home() {
 
   return (
     <div style={styles.dashboardContainer}>
-      {/* HEADER BIANCO E BLU SCURO */}
       <header style={styles.header}>
         <div>
           <h2 style={styles.headerTitle}>SKICLUB <span style={{ color: '#2563eb' }}>PRO</span></h2>
@@ -955,7 +921,6 @@ export default function Home() {
         <button onClick={handleLogout} style={styles.btnLogout}>Esci</button>
       </header>
 
-      {/* TABS DESKTOP */}
       <nav style={styles.tabBarDesktop}>
         <button style={activeTab === 'videos' ? styles.tabActive : styles.tab} onClick={() => setActiveTab('videos')}>
           📹 Video Library
@@ -981,7 +946,6 @@ export default function Home() {
         </button>
       </nav>
 
-      {/* TAB 1: VIDEO LIBRARY CON PLAYER VIOLA ORIGINALE */}
       {activeTab === 'videos' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
@@ -1029,7 +993,6 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB PER ATLETI: INDICAZIONI DISPONIBILITÀ (NON MODIFICA I GRAFICI) */}
       {activeTab === 'athlete_program' && currentUser.role === 'athlete' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
@@ -1056,7 +1019,6 @@ export default function Home() {
                         <span style={{ fontSize: '11px', color: '#94a3b8' }}>Inserito da: {act.author_name}</span>
                       </div>
 
-                      {/* PULSANTI DI RISPOSTA PER L'ATLETA */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '160px' }}>
                         <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', textAlign: 'center' }}>
                           La tua risposta: {myAvailability === 'present' ? 'Ci sarò ✅' : myAvailability === 'absent' ? 'Non ci sarò ❌' : 'Non ancora indicata'}
@@ -1099,14 +1061,12 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 2: ATTIVITÀ & APPELLO UNIFICATA (COACH) */}
       {activeTab === 'activity_appello' && currentUser.role !== 'athlete' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
             <h3>Crea Attività & Appello Diretto ({currentUser.coach_group || 'Tutti'})</h3>
           </div>
 
-          {/* BOX CREAZIONE ATTIVITÀ MULTI-CATEGORIA */}
           <div style={styles.cardBox}>
             <h4 style={{ margin: '0 0 16px 0', color: '#1e3a8a' }}>➕ Nuova Attività del Giorno</h4>
             <form onSubmit={handleCreateActivity} style={styles.form}>
@@ -1139,7 +1099,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* SELEZIONE MULTIPLA CATEGORIE */}
               <div style={{ marginTop: '12px' }}>
                 <label style={styles.label}>Seleziona Categorie Coinvolte (Multi-Scelta):</label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '6px' }}>
@@ -1184,7 +1143,6 @@ export default function Home() {
             </form>
           </div>
 
-          {/* BANNER ATTIVITÀ DI OGGI SELEZIONABILE */}
           <div style={{ marginTop: '30px' }}>
             <h4>📋 Appello Presenze Attività Odierne</h4>
             {todayActivities.length > 0 ? (
@@ -1215,7 +1173,6 @@ export default function Home() {
             )}
           </div>
 
-          {/* LISTA APPELLO DINAMICA */}
           {selectedActivityId && (
             <div style={{ marginTop: '24px' }}>
               <div style={styles.categoryBadgeInfo}>
@@ -1242,7 +1199,6 @@ export default function Home() {
                     const editable = canEditCategory(athlete.category);
                     const isChecked = !!attendance[athlete.id];
 
-                    // Mostra la risposta informativa dell'atleta se presente
                     const athleteLog = attendanceLogs.find(
                       l => l.date === selectedActivityObject?.date && String(l.activity_id) === String(selectedActivityId) && String(l.athlete_id) === String(athlete.id)
                     );
@@ -1297,7 +1253,6 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 3: STORICO ATTIVITÀ */}
       {activeTab === 'history' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
@@ -1328,13 +1283,11 @@ export default function Home() {
         </main>
       )}
 
-      {/* TAB 4: ATLETI & SCHEDE (PRIVACY: ATLETA VEDE SOLO LA SUA SCHEDA) */}
       {activeTab === 'members_schede' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
             <h3>{currentUser.role === 'athlete' ? 'La Mia Scheda Profilo & Statistiche' : 'Elenco Atleti, Dati Tecnici & Schede'}</h3>
             
-            {/* PULSANTI DI DOWNLOAD EXCEL / CSV SOLO PER GLI ALLENATORI */}
             {currentUser.role !== 'athlete' && (
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 <button onClick={() => handleExportExcelByGroup('Piccoli')} style={styles.btnExcel}>
@@ -1359,7 +1312,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* FILTRAGGIO PRIVACY: ATLETI VEDONO SOLO SE STESSI, COACH VEDONO IL LORO GRUPPO/CATEGORIA */}
           {ALL_CATEGORIES.map(categoryName => {
             const categoryAthletes = members
               .filter(m => m.role === 'athlete' && m.category === categoryName)
@@ -1384,7 +1336,6 @@ export default function Home() {
                     const isExpanded = currentUser.role === 'athlete' ? true : expandedAthleteId === athlete.id;
                     const canEditTech = canEditCategory(athlete.category);
 
-                    // CALCOLO GRAFICO E STATISTICHE ATLETA (SOLO CONTEGGI UFFICIALI COACH)
                     const existingActivityIds = new Set(activities.map(a => String(a.id)));
                     const athleteLogs = attendanceLogs.filter(l => {
                       if (String(l.athlete_id) !== String(athlete.id)) return false;
@@ -1422,7 +1373,6 @@ export default function Home() {
 
                     return (
                       <div key={athlete.id} style={styles.accordionCard}>
-                        {/* INTESTAZIONE ATLETA */}
                         <div
                           onClick={() => currentUser.role !== 'athlete' && setExpandedAthleteId(isExpanded ? null : athlete.id)}
                           style={{
@@ -1449,7 +1399,6 @@ export default function Home() {
                           </div>
                         </div>
 
-                        {/* CONTENUTO ESPANDIBILE (DATI TECNICI + GRAFICO) */}
                         {isExpanded && (
                           <div style={styles.accordionBody}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
@@ -1461,7 +1410,6 @@ export default function Home() {
                               )}
                             </div>
 
-                            {/* GRIGLIA SCHEDA TECNICA */}
                             <div style={styles.techGrid}>
                               <div>🏆 Categoria: <strong>{athlete.category}</strong></div>
                               <div>🎂 Data di Nascita: <strong>{athlete.birth_date || 'Non inserita'}</strong></div>
@@ -1472,7 +1420,6 @@ export default function Home() {
                               <div>👟 Scarpone: <strong>{athlete.boot_size_mm ? `${athlete.boot_size_mm} mm` : 'n.d.'}</strong></div>
                             </div>
 
-                            {/* GRAFICO E RESOCONTO */}
                             <h5 style={{ margin: '20px 0 12px 0', color: '#1e3a8a' }}>📊 Report Stagionale Presenze Ufficiali</h5>
                             <div style={styles.statsSummaryGrid}>
                               <div style={styles.summaryBox}>
@@ -1515,7 +1462,6 @@ export default function Home() {
         </main>
       )}
 
-      {/* BOTTOM BAR MOBILE */}
       <nav style={styles.bottomBarMobile}>
         <button style={activeTab === 'videos' ? styles.bottomTabActive : styles.bottomTab} onClick={() => setActiveTab('videos')}>
           <span>📹</span>
@@ -1546,7 +1492,6 @@ export default function Home() {
         </button>
       </nav>
 
-      {/* MODALE MODIFICA CATEGORIA E DATI TECNICI ATLETA */}
       {editingTechMember && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCard}>
@@ -1588,7 +1533,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* MODALE MODIFICA PRESENZE DA STORICO */}
       {editingActivity && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCardLarge}>
@@ -1644,7 +1588,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* MODALE UPLOAD VIDEO */}
       {showUploadModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCard}>
@@ -1691,7 +1634,6 @@ export default function Home() {
   );
 }
 
-// DEFINIZIONE STILI AGGIORNATA
 const styles = {
   loginContainer: { minHeight: '100vh', backgroundColor: '#f8fafc', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' },
   loginCard: { backgroundColor: '#ffffff', padding: '32px', borderRadius: '16px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', color: '#0f172a', border: '1px solid #e2e8f0' },
