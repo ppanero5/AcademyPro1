@@ -24,7 +24,7 @@ const ALL_CATEGORIES = [...CATEGORIES_PICCOLI, ...CATEGORIES_GRANDI];
 const PIN_COACH_PICCOLI = 'COACH-PICCOLI';
 const PIN_COACH_GRANDI = 'COACH-GRANDI';
 
-// --- MODALE ANALISI VIDEO DEDICATA (SCHERMO INTERO MOBILE COME DA SCREENSHOT) ---
+// --- MODALE ANALISI VIDEO DEDICATA CON BARRA DI SCORRIMENTO (SEEKBAR COMPATIBILE ANDROID E IOS) ---
 const VideoModalPlayer = ({ video, onClose }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -33,9 +33,12 @@ const VideoModalPlayer = ({ video, onClose }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [drawColor, setDrawColor] = useState('#00b4d8'); // Azzurro come screenshot
+  const [drawColor, setDrawColor] = useState('#00b4d8');
 
-  // Adatta le dimensioni del Canvas alla dimensione effettiva del video sullo schermo
+  // GESTIONE SCORRIMENTO TEMPO
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
   const syncCanvas = () => {
     const v = videoRef.current;
     const c = canvasRef.current;
@@ -78,6 +81,14 @@ const VideoModalPlayer = ({ video, onClose }) => {
     }
   };
 
+  const handleSeek = (e) => {
+    const targetTime = parseFloat(e.target.value);
+    setCurrentTime(targetTime);
+    if (videoRef.current) {
+      videoRef.current.currentTime = targetTime;
+    }
+  };
+
   const clearCanvas = () => {
     const c = canvasRef.current;
     if (c) {
@@ -86,7 +97,14 @@ const VideoModalPlayer = ({ video, onClose }) => {
     }
   };
 
-  // DISEGNO DINAMICO TOUCH / MOUSE
+  const formatTime = (timeInSeconds) => {
+    if (isNaN(timeInSeconds)) return '0:00';
+    const mins = Math.floor(timeInSeconds / 60);
+    const secs = Math.floor(timeInSeconds % 60);
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  // DISEGNO DINAMICO TOUCH (ANDROID/IOS) E MOUSE (PC)
   const getCoords = (e) => {
     const c = canvasRef.current;
     if (!c) return { x: 0, y: 0 };
@@ -148,7 +166,13 @@ const VideoModalPlayer = ({ video, onClose }) => {
             src={video.video_url}
             playsInline
             style={styles.videoStageElement}
-            onLoadedData={syncCanvas}
+            onLoadedData={() => {
+              syncCanvas();
+              if (videoRef.current) setDuration(videoRef.current.duration);
+            }}
+            onTimeUpdate={() => {
+              if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
+            }}
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
             onClick={togglePlay}
@@ -167,8 +191,23 @@ const VideoModalPlayer = ({ video, onClose }) => {
           />
         </div>
 
-        {/* CONTROLLI INFERIORI (ESATTAMENTE COME NELLO SCREENSHOT) */}
+        {/* CONTROLLI INFERIORI (STYLE DARK SCREENSHOT + BARRA DI SCORRIMENTO) */}
         <div style={styles.videoControlsBox}>
+          {/* BARRA SCORRIMENTO TEMPO (SEEKBAR) */}
+          <div style={styles.seekBarRow}>
+            <span style={styles.timeLabel}>{formatTime(currentTime)}</span>
+            <input
+              type="range"
+              min="0"
+              max={duration || 100}
+              step="0.01"
+              value={currentTime}
+              onChange={handleSeek}
+              style={styles.seekBarInput}
+            />
+            <span style={styles.timeLabel}>{formatTime(duration)}</span>
+          </div>
+
           {/* RIGA 1: PLAY/PAUSA - FRAME - FRAME */}
           <div style={styles.controlsRow}>
             <button onClick={togglePlay} style={styles.btnControlSquare}>
@@ -962,7 +1001,7 @@ export default function Home() {
         </button>
       </nav>
 
-      {/* TAB 1: VIDEO LIBRARY CON ICONE / CARDS PER APRIRE LA MODALE DI ANALISI */}
+      {/* TAB 1: VIDEO LIBRARY CON CARDS AD ANTEPRIMA PER APRIRE LA MODALE DI ANALISI */}
       {activeTab === 'videos' && (
         <main style={styles.mainContent}>
           <div style={styles.sectionHeader}>
@@ -1025,7 +1064,7 @@ export default function Home() {
         </main>
       )}
 
-      {/* MODALE ANALISI VIDEO DEDICATA QUANDO UN VIDEO VIENE CLICCATO */}
+      {/* MODALE ANALISI VIDEO DEDICATA QUANDO UN VIDEO VIENE SELEZIONATO */}
       {activeAnalysisVideo && (
         <VideoModalPlayer
           video={activeAnalysisVideo}
@@ -1674,7 +1713,7 @@ export default function Home() {
   );
 }
 
-// STILI AGGIORNATI CON MODALE FULL-SCREEN DARK SCURO COME DA SCREENSHOT
+// OGGETTO STILI AGGIORNATO COMPRESO DI STYLE SEEKBAR
 const styles = {
   loginContainer: { minHeight: '100vh', backgroundColor: '#f8fafc', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' },
   loginCard: { backgroundColor: '#ffffff', padding: '32px', borderRadius: '16px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 25px rgba(15,23,42,0.08)', color: '#0f172a', border: '1px solid #e2e8f0' },
@@ -1736,7 +1775,6 @@ const styles = {
   noTodayBanner: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '12px 16px', borderRadius: '8px', marginBottom: '16px' },
   categoryBadgeInfo: { backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', color: '#1e40af' },
 
-  // CARD THUMBNAIL LIBRARY VIDEO
   videoGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '20px' },
   videoThumbnailCard: { backgroundColor: '#ffffff', borderRadius: '12px', overflow: 'hidden', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.03)' },
   thumbnailPreviewBox: { position: 'relative', height: '180px', backgroundColor: '#0f172a', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center' },
@@ -1748,7 +1786,7 @@ const styles = {
   videoSub: { margin: 0, fontSize: '12px', color: '#475569' },
   videoDate: { margin: '6px 0 0 0', fontSize: '11px', color: '#94a3b8' },
 
-  // MODALE PLAYER VIDEO SCURO (FULLSCREEN MOBILE STILE SCREENSHOT)
+  // MODALE PLAYER SCHERMO INTERO MOBILE DEDICATA
   modalOverlayDark: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#090d16', zIndex: 2000, display: 'flex', justifyContent: 'center', alignItems: 'center' },
   modalVideoContainer: { width: '100%', maxWidth: '480px', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#0b1120' },
   modalVideoHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #1e293b', backgroundColor: '#0f172a' },
@@ -1758,12 +1796,18 @@ const styles = {
   videoStageElement: { width: '100%', height: '100%', objectFit: 'contain' },
   canvasOverlay: { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', touchAction: 'none', cursor: 'crosshair' },
 
-  videoControlsBox: { backgroundColor: '#0f172a', padding: '16px', borderTop: '1px solid #1e293b', display: 'flex', flexDirection: 'column', gap: '10px' },
+  videoControlsBox: { backgroundColor: '#0f172a', padding: '14px 16px', borderTop: '1px solid #1e293b', display: 'flex', flexDirection: 'column', gap: '8px' },
+  
+  // SEEKBAR SCORRIMENTO
+  seekBarRow: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' },
+  seekBarInput: { flex: 1, height: '4px', accentColor: '#3b82f6', cursor: 'pointer' },
+  timeLabel: { fontSize: '11px', color: '#94a3b8', fontWeight: 'bold', fontFamily: 'monospace' },
+
   controlsRow: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' },
-  btnControlSquare: { backgroundColor: '#1e293b', color: '#ffffff', border: '1px solid #334155', borderRadius: '8px', padding: '12px 0', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center' },
-  colorRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' },
-  colorPickerInput: { width: '32px', height: '32px', padding: 0, border: 'none', borderRadius: '50%', background: 'none', cursor: 'pointer' },
-  btnClearRed: { backgroundColor: '#7f1d1d', color: '#fca5a5', border: '1px solid #991b1b', borderRadius: '8px', padding: '8px 16px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' },
+  btnControlSquare: { backgroundColor: '#1e293b', color: '#ffffff', border: '1px solid #334155', borderRadius: '8px', padding: '10px 0', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center' },
+  colorRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px' },
+  colorPickerInput: { width: '30px', height: '30px', padding: 0, border: 'none', borderRadius: '50%', background: 'none', cursor: 'pointer' },
+  btnClearRed: { backgroundColor: '#7f1d1d', color: '#fca5a5', border: '1px solid #991b1b', borderRadius: '8px', padding: '8px 14px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' },
 
   membersList: { display: 'flex', flexDirection: 'column', gap: '10px' },
   memberRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0', transition: 'all 0.2s ease' },
